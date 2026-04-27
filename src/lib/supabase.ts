@@ -48,6 +48,13 @@ function formatAuthErrorMessage(error: unknown) {
   return message
 }
 
+export function getRedirectUrl() {
+  // Use window.location.origin for both local and production
+  // This ensures that if you are on Vercel, it redirects to Vercel,
+  // and if you are on localhost, it redirects back to your active port.
+  return `${window.location.origin}/dashboard`
+}
+
 export async function signInWithGoogle() {
   if (!supabase) {
     throw new Error('Supabase is not configured.')
@@ -56,7 +63,7 @@ export async function signInWithGoogle() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/dashboard`,
+      redirectTo: getRedirectUrl(),
       queryParams: {
         access_type: 'offline',
         prompt: 'select_account',
