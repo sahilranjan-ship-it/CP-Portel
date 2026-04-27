@@ -93,3 +93,4 @@ Supabase Dashboard -> Authentication -> Providers -> Google
   - store `auth.users.user_metadata.role` and `full_name` consistently
   - apply [supabase/migrations/002_role_ownership_and_rls.sql](/Users/user/Desktop/CP AS Partner/supabase/migrations/002_role_ownership_and_rls.sql) to enable owner-scoped policies for CP, IS, Scheduling and VM
   - ensure submitted leads receive `is_owner_id` and scheduled leads receive `scheduling_owner_id`
+# CP-Portel
