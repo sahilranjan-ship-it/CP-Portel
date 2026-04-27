@@ -123,8 +123,22 @@ export function CpDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
   }, [dataset.meetings, myLeads])
 
   const myAgreement = useMemo(() => {
-    return dataset.agreements.find(a => a.contractorId === cp?.id)
-  }, [dataset.agreements, cp])
+    // Find ALL cp IDs that belong to this user (by email or linked user ID)
+    const myCpIds = new Set(
+      dataset.cps
+        .filter(c =>
+          c.email?.toLowerCase() === sessionUser.email?.toLowerCase() ||
+          c.linkedUserId === sessionUser.userMasterId
+        )
+        .map(c => c.id)
+    )
+    // Return the most relevant agreement (prefer Sent/Signed over Pending)
+    const all = dataset.agreements.filter(a => myCpIds.has(a.contractorId))
+    return all.sort((a, b) => {
+      const rank = (s: string) => s === 'Signed' ? 3 : s === 'Sent' ? 2 : s === 'Pending' ? 1 : 0
+      return rank(b.status) - rank(a.status)
+    })[0]
+  }, [dataset.agreements, dataset.cps, sessionUser.email, sessionUser.userMasterId])
 
   // ── Stats ──
   const stats = useMemo(() => {
@@ -226,8 +240,11 @@ export function CpDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
 
   // ─── Agreements View ──────────────────────────────────────────────────────────
   if (isAgreementsView) {
-    // Agreement is only visible once the VM has explicitly sent it (status moves from Pending → Sent)
-    const agreementSent = ['Sent', 'Signed', 'Done'].includes(effectiveCp.onboardingAgreementSentStatus ?? '')
+    // Agreement is visible if EITHER the onboarding field OR the agreement_master record shows Sent/Signed/Done
+    const agreementSent = (
+      ['Sent', 'Signed', 'Done'].includes(effectiveCp.onboardingAgreementSentStatus ?? '') ||
+      ['Sent', 'Signed', 'Done'].includes(myAgreement?.status ?? '')
+    )
     const isSigned = effectiveCp.onboardingCpSignedStatus === 'Done' || myAgreement?.status === 'Signed' || myAgreement?.status === 'Done'
     const agreementContent = cp ? generateAgreement(cp.name) : AGREEMENT_TEMPLATE
 
@@ -285,9 +302,13 @@ export function CpDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
             <div style={{ borderTop: '2px solid #f1f5f9', paddingTop: '32px' }}>
               <h3 style={{ marginBottom: '16px' }}>Digital Signature</h3>
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '16px', padding: '24px', display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'center' }}>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: '160px' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#1a3c8f', marginBottom: '6px' }}>FULL NAME AS PER AADHAAR</label>
-                  <input type="text" defaultValue={effectiveCp.name} placeholder="Type your full name" style={{ width: '100%', padding: '12px 16px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '1rem' }} />
+                  <input id="sign-name" type="text" defaultValue={effectiveCp.name} placeholder="Type your full name" style={{ width: '100%', padding: '12px 16px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '1rem' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: '160px' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#1a3c8f', marginBottom: '6px' }}>EMAIL ADDRESS</label>
+                  <input id="sign-email" type="email" defaultValue={effectiveCp.email ?? sessionUser.email ?? ''} placeholder="your@email.com" style={{ width: '100%', padding: '12px 16px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '1rem' }} />
                 </div>
                 <button
                   disabled={isSubmitting || !cp}
@@ -301,11 +322,94 @@ export function CpDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
               </p>
             </div>
           ) : (
-            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '16px', padding: '24px', textAlign: 'center' }}>
-              <p style={{ color: '#166534', fontWeight: 700, margin: 0 }}>Agreement Signed Successfully on {myAgreement?.signedDate ? formatDate(myAgreement.signedDate) : 'Recently'}</p>
-              <p style={{ color: '#15803d', fontSize: '0.85rem', marginTop: '4px' }}>Your onboarding is complete. You can now start sharing leads.</p>
+            <div style={{ background: '#f0fdf4', border: '2px solid #22c55e', borderRadius: '16px', padding: '28px', textAlign: 'center' }}>
+              {/* Green signed badge */}
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#22c55e', color: 'white', padding: '8px 20px', borderRadius: '999px', fontWeight: 700, fontSize: '0.9rem', marginBottom: '12px' }}>
+                <span>✅</span> Agreement Signed
+              </div>
+              <p style={{ color: '#166534', fontWeight: 600, margin: '0 0 4px' }}>
+                Signed on {myAgreement?.signedDate ? formatDate(myAgreement.signedDate) : 'Recently'}
+              </p>
+              <p style={{ color: '#15803d', fontSize: '0.85rem', margin: '0 0 20px' }}>
+                Your onboarding is complete. You can now start sharing leads.
+              </p>
+              {/* Download PDF button */}
+              <button
+                onClick={() => {
+                  const signedDate = myAgreement?.signedDate ? formatDate(myAgreement.signedDate) : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+                  const cpName = effectiveCp.name || 'Partner'
+                  const cpEmail = effectiveCp.email || sessionUser.email || ''
+                  const printWindow = window.open('', '_blank', 'width=900,height=700')
+                  if (!printWindow) return
+                  printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Partnership Agreement - ${cpName}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Georgia', serif; color: #1a1a1a; background: white; padding: 60px; max-width: 800px; margin: 0 auto; line-height: 1.8; font-size: 13px; }
+    .header { text-align: center; border-bottom: 3px solid #1a3c8f; padding-bottom: 24px; margin-bottom: 32px; }
+    .header h1 { font-size: 22px; color: #1a3c8f; letter-spacing: 1px; margin-bottom: 6px; }
+    .header p { color: #555; font-size: 12px; }
+    .status-badge { display: inline-block; background: #22c55e; color: white; padding: 4px 16px; border-radius: 999px; font-size: 11px; font-weight: bold; margin-top: 8px; font-family: Arial, sans-serif; }
+    .body-text { white-space: pre-wrap; font-size: 12.5px; line-height: 1.85; color: #222; margin-bottom: 40px; }
+    .signature-block { border-top: 2px solid #1a3c8f; padding-top: 32px; margin-top: 40px; }
+    .signature-block h3 { font-size: 14px; color: #1a3c8f; margin-bottom: 20px; letter-spacing: 0.5px; }
+    .sig-row { display: flex; gap: 24px; margin-top: 8px; }
+    .sig-field { flex: 1; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    .sig-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 6px; font-family: Arial, sans-serif; }
+    .sig-value { font-size: 18px; font-style: italic; color: #1a3c8f; font-family: 'Georgia', cursive; }
+    .sig-email { font-size: 13px; font-style: normal; color: #1a3c8f; font-family: Arial, sans-serif; }
+    .footer { text-align: center; margin-top: 48px; font-size: 10px; color: #aaa; font-family: Arial, sans-serif; border-top: 1px solid #eee; padding-top: 16px; }
+    .certified { background: #f0fdf4; border: 1.5px solid #22c55e; border-radius: 8px; padding: 12px 20px; margin-top: 24px; color: #166534; font-size: 11px; font-family: Arial, sans-serif; }
+    @media print { body { padding: 40px; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>DOMESTIC CHANNEL PARTNER AGREEMENT</h1>
+    <p>Brick &amp; Bolt Construction Technologies Pvt. Ltd.</p>
+    <span class="status-badge">✓ DIGITALLY SIGNED</span>
+  </div>
+  <div class="body-text">${agreementContent.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+  <div class="signature-block">
+    <h3>DIGITAL SIGNATURE CERTIFICATE</h3>
+    <div class="sig-row">
+      <div class="sig-field">
+        <div class="sig-value">${cpName}</div>
+        <div class="sig-label">Signed By (Channel Partner)</div>
+      </div>
+      <div class="sig-field">
+        <div class="sig-email">${cpEmail}</div>
+        <div class="sig-label">Email Address</div>
+      </div>
+      <div class="sig-field">
+        <div class="sig-value">${signedDate}</div>
+        <div class="sig-label">Date of Signing</div>
+      </div>
+    </div>
+    <div class="certified">
+      ✅ This agreement was digitally signed by <strong>${cpName}</strong> (<strong>${cpEmail}</strong>) on <strong>${signedDate}</strong> via the Brick &amp; Bolt Partner Portal. This constitutes a legally binding electronic signature.
+    </div>
+  </div>
+  <div class="footer">
+    Brick &amp; Bolt Construction Technologies Pvt. Ltd. · Partner Portal · Generated ${new Date().toLocaleDateString('en-IN')}
+  </div>
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`)
+                  printWindow.document.close()
+                }}
+                style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 28px', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', transition: 'background 0.2s' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#15803d')}
+                onMouseLeave={e => (e.currentTarget.style.background = '#16a34a')}
+              >
+                📄 Download Signed Agreement PDF
+              </button>
             </div>
           )}
+
         </div>
       </div>
     )
@@ -803,7 +907,7 @@ function LeadModal({ show, onClose, onSubmit, isSubmitting, success }: {
           <div style={{ textAlign: 'center', padding: '20px' }}>
             <div style={{ fontSize: '3rem', marginBottom: '12px' }}>🎉</div>
             <h3>Lead Submitted!</h3>
-            <p style={{ color: '#64748b' }}>Your lead has been assigned to the IS Team for qualification.</p>
+            <p style={{ color: '#64748b' }}>Your lead has been assigned for qualification.</p>
           </div>
         ) : (
           <>

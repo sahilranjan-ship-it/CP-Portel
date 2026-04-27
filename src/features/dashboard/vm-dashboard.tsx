@@ -4,7 +4,7 @@ import { formatCurrencyCr } from '../../lib/format'
 import type { NewCpInput, PartnershipModel, VmLeadInput } from '../../types/domain'
 import { NOT_PROCEEDING_REASONS } from '../../types/domain'
 import type { SessionUser } from '../../lib/supabase'
-import { AGREEMENT_TEMPLATE } from '../../lib/legal-templates'
+import { AGREEMENT_TEMPLATE, generateAgreement } from '../../lib/legal-templates'
 
 const vmTabs = ['CP Master', 'CP Onboarding', 'Lead Creation'] as const
 type VmTab = typeof vmTabs[number]
@@ -107,10 +107,10 @@ export function VmDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
 
     const filteredCps = useMemo(() =>
         cps.filter(c =>
-            (!cpSearch ||
-                c.name.toLowerCase().includes(cpSearch.toLowerCase()) ||
-                c.city.toLowerCase().includes(cpSearch.toLowerCase()) ||
-                c.code.toLowerCase().includes(cpSearch.toLowerCase()))
+        (!cpSearch ||
+            c.name.toLowerCase().includes(cpSearch.toLowerCase()) ||
+            c.city.toLowerCase().includes(cpSearch.toLowerCase()) ||
+            c.code.toLowerCase().includes(cpSearch.toLowerCase()))
         ),
         [cps, cpSearch]
     )
@@ -390,8 +390,64 @@ export function VmDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
                                             <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, background: cp.onboardingCpSignedStatus === 'Done' ? '#dcfce7' : '#f1f5f9', color: cp.onboardingCpSignedStatus === 'Done' ? '#166534' : '#64748b' }}>{cp.onboardingCpSignedStatus || 'Pending'}</span>
                                         </td>
                                         <td style={{ padding: '8px 16px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', textAlign: 'center' }}>
-                                            {cp.onboardingSignedAgreementUrl ? <a href={cp.onboardingSignedAgreementUrl} target="_blank" rel="noreferrer" style={{ color: '#1a3c8f', fontWeight: 700 }}>VIEW</a> : '—'}
+                                            {cp.onboardingCpSignedStatus === 'Done' ? (
+                                                <button
+                                                    onClick={() => {
+                                                        const cpName = cp.name || 'Partner'
+                                                        // Use actual signed date from agreement_master if available
+                                                        const cpAgreement = agreements.find(a => a.contractorId === cp.id)
+                                                        const rawDate = cpAgreement?.signedDate
+                                                        const signedDate = rawDate
+                                                            ? new Date(rawDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+                                                            : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+                                                        // Use generateAgreement so {{cp_name}} is replaced
+                                                        const content = generateAgreement(cpName)
+                                                        const pw = window.open('', '_blank', 'width=900,height=700')
+                                                        if (!pw) return
+                                                        pw.document.write(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Signed Agreement - ${cpName}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Georgia',serif;color:#1a1a1a;background:white;padding:60px;max-width:800px;margin:0 auto;line-height:1.8;font-size:13px}
+  .hdr{text-align:center;border-bottom:3px solid #1a3c8f;padding-bottom:24px;margin-bottom:32px}
+  .hdr h1{font-size:22px;color:#1a3c8f;letter-spacing:1px;margin-bottom:6px}
+  .hdr p{color:#555;font-size:12px}
+  .badge{display:inline-block;background:#22c55e;color:white;padding:4px 16px;border-radius:999px;font-size:11px;font-weight:bold;margin-top:8px;font-family:Arial,sans-serif}
+  .body-text{white-space:pre-wrap;font-size:12.5px;line-height:1.85;color:#222;margin-bottom:40px}
+  .sig-block{border-top:2px solid #1a3c8f;padding-top:32px;margin-top:40px}
+  .sig-block h3{font-size:14px;color:#1a3c8f;margin-bottom:20px}
+  .sig-row{display:flex;gap:24px;margin-top:8px}
+  .sig-field{flex:1;border-bottom:1px solid #333;padding-bottom:4px}
+  .sig-label{font-size:10px;color:#666;text-transform:uppercase;margin-top:6px;font-family:Arial,sans-serif}
+  .sig-value{font-size:18px;font-style:italic;color:#1a3c8f;font-family:'Georgia',cursive}
+  .sig-email{font-size:13px;font-style:normal;color:#1a3c8f;font-family:Arial,sans-serif}
+  .cert{background:#f0fdf4;border:1.5px solid #22c55e;border-radius:8px;padding:12px 20px;margin-top:24px;color:#166534;font-size:11px;font-family:Arial,sans-serif}
+  .footer{text-align:center;margin-top:48px;font-size:10px;color:#aaa;font-family:Arial,sans-serif;border-top:1px solid #eee;padding-top:16px}
+  @media print{body{padding:40px}}
+</style></head><body>
+  <div class="hdr"><h1>DOMESTIC CHANNEL PARTNER AGREEMENT</h1><p>Brick &amp; Bolt Construction Technologies Pvt. Ltd.</p><span class="badge">✓ DIGITALLY SIGNED</span></div>
+  <div class="body-text">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+  <div class="sig-block">
+    <h3>DIGITAL SIGNATURE CERTIFICATE</h3>
+    <div class="sig-row">
+      <div class="sig-field"><div class="sig-value">${cpName}</div><div class="sig-label">Signed By (Channel Partner)</div></div>
+      <div class="sig-field"><div class="sig-email">${cp.email || ''}</div><div class="sig-label">Email Address</div></div>
+      <div class="sig-field"><div class="sig-value">${signedDate}</div><div class="sig-label">Date of Signing</div></div>
+    </div>
+    <div class="cert">✅ Digitally signed by <strong>${cpName}</strong> (<strong>${cp.email || ''}</strong>) on <strong>${signedDate}</strong> via the Brick &amp; Bolt Partner Portal.</div>
+  </div>
+  <div class="footer">Brick &amp; Bolt Construction Technologies Pvt. Ltd. · Generated ${new Date().toLocaleDateString('en-IN')}</div>
+  <script>window.onload=()=>{window.print()}<\/script>
+</body></html>`)
+                                                        pw.document.close()
+                                                    }}
+                                                    style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '5px 12px', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                                >
+                                                    📄 Download
+                                                </button>
+                                            ) : '—'}
                                         </td>
+
                                     </tr>
                                 ))}
                             </tbody>
@@ -480,10 +536,10 @@ export function VmDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
                                                 <span style={{
                                                     background: lead.currentStage === 'Qualified' ? '#dcfce7'
                                                         : lead.currentStage === 'Rejected' ? '#fee2e2'
-                                                        : lead.currentStage === 'Lead Shared' ? '#eff6ff' : '#f8fafc',
+                                                            : lead.currentStage === 'Lead Shared' ? '#eff6ff' : '#f8fafc',
                                                     color: lead.currentStage === 'Qualified' ? '#166534'
                                                         : lead.currentStage === 'Rejected' ? '#dc2626'
-                                                        : lead.currentStage === 'Lead Shared' ? '#1a3c8f' : '#475569',
+                                                            : lead.currentStage === 'Lead Shared' ? '#1a3c8f' : '#475569',
                                                     padding: '2px 8px', borderRadius: '5px', fontSize: '0.68rem', fontWeight: 700, whiteSpace: 'nowrap'
                                                 }}>{lead.currentStage}</span>
                                             </td>
