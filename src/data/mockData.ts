@@ -424,5 +424,6 @@ export const appDataset: AppDataset = {
   sharedConstructionProjects,
   barterProjectMatches,
   agreements,
+  vmUpdates: [],
   notifications,
 }

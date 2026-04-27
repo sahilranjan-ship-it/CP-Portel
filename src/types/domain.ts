@@ -1,5 +1,16 @@
 export type Role = 'cp' | 'is' | 'scheduling' | 'vm' | 'admin'
 
+export const NOT_PROCEEDING_REASONS = [
+  'Area is outside my operating zone',
+  'I do not work in this city / pincode',
+  'Project value is too low',
+  'Margin is too low',
+  'Commission % is not attractive',
+  'This project is outside my expertise / scope'
+] as const;
+
+export type NotProceedingReason = typeof NOT_PROCEEDING_REASONS[number];
+
 export type PartnershipModel =
   | 'Direct Incentive'
   | 'Shared Construction'
@@ -10,20 +21,7 @@ export type LeadTemperature = 'Hot' | 'Warm' | 'Pre-Cold' | 'Cold'
 
 export type LeadStage =
   | 'Lead Shared'
-  | 'Assigned to IS'
-  | 'Calling Attempt'
-  | 'Connected'
-  | 'RNR'
-  | 'Callback Later'
-  | 'Interested'
-  | 'Non-Interested'
-  | 'Hot'
-  | 'Warm'
-  | 'Pre-Cold'
-  | 'Cold'
   | 'Qualified'
-  | 'CRN Created'
-  | 'Sent to Scheduling Team'
   | 'Meeting Scheduled'
   | 'Meeting Done'
   | 'Proposal Shared'
@@ -32,6 +30,8 @@ export type LeadStage =
   | 'BA Collected'
   | 'Rejected'
   | 'Inactive'
+  | 'RNR'
+  | 'Callback Later'
 
 export type LeadBucket = 'Active Leads' | 'Inactive Leads' | 'Won Leads' | 'Rejected Leads'
 
@@ -90,6 +90,7 @@ export type UserProfile = {
 
 export type ContractorPartner = {
   id: string
+  code: string
   name: string
   companyName: string
   city: string
@@ -98,6 +99,7 @@ export type ContractorPartner = {
   phone: string
   spoc: string
   vmOwner: string
+  vmOwnerId?: string          // user_master.id of the assigned VM (for per-VM portfolio filtering)
   tier: string
   activeProjects: number
   completedProjects: number
@@ -110,7 +112,21 @@ export type ContractorPartner = {
   eligibleForProject: boolean
   initProjectCount: number
   leadsReceived: number
+  email?: string
+  userType?: string
+  lowestPercentageCompleted?: number
   linkedUserId?: string
+  // Persisted Onboarding Data (Dedicated Table/Fields)
+  onboardingVmName?: string
+  onboardingCallStatus?: string
+  onboardingMeetingStatus?: string
+  onboardingMeetingScheduledDate?: string
+  onboardingAlignedForActivation?: 'Yes' | 'No'
+  onboardingModeOfMeeting?: 'Online' | 'Offline'
+  onboardingCpReadyForSigning?: 'Yes' | 'No'
+  onboardingAgreementSentStatus?: 'Pending' | 'Sent' | 'Signed' | 'Done'
+  onboardingCpSignedStatus?: 'Pending' | 'Sent' | 'Signed' | 'Done'
+  onboardingSignedAgreementUrl?: string
 }
 
 export type Lead = {
@@ -128,6 +144,8 @@ export type Lead = {
   bucket: LeadBucket
   cpId: string
   cpName: string
+  cpEmail?: string
+  cpPhone?: string
   isOwner: string
   schedulingOwner?: string
   assignedOs?: string
@@ -143,6 +161,7 @@ export type Lead = {
   expectedTimeline?: string
   budgetRange?: string
   comment?: string
+  reasonForNotProceeding?: string
 }
 
 export type IsUpdate = {
@@ -188,11 +207,22 @@ export type Agreement = {
   id: string
   contractorId: string
   cpName: string
+  cpEmail?: string
   sentDate: string
-  status: AgreementStatus
+  status: 'Pending' | 'Sent' | 'Signed' | 'Done'
   signedDate?: string
+  signerName?: string
+  signerEmail?: string
+  signedContent?: string
   spotdraftStatus: 'Ready' | 'Sent' | 'Viewed' | 'Completed'
   vmOwner: string
+  // New onboarding fields
+  callStatus?: string
+  meetingStatus?: string
+  meetingScheduledDate?: string
+  alignedForActivation?: 'Yes' | 'No'
+  modeOfMeeting?: 'Online' | 'Offline'
+  readyForSigning?: 'Yes' | 'No'
 }
 
 export type Notification = {
@@ -228,6 +258,28 @@ export type BarterProjectMatch = {
   createdAt: string
 }
 
+export type VmUpdate = {
+  id: string
+  cpId: string
+  vmOwner?: string
+  callStatus?: string
+  meetingStatus?: string
+  meetingScheduledDate?: string
+  alignedForActivation?: 'Yes' | 'No'
+  modeOfMeeting?: 'Online' | 'Offline'
+  readyForSigning?: 'Yes' | 'No'
+  agreementSigningStatus: 'Pending' | 'Signed' | 'Done'
+  leadsReceived: number
+  remarks?: string
+  createdAt: string
+}
+
+export type CPOnboardingUpdateInput = {
+  cpId: string
+  field: string
+  value: any
+}
+
 export type AppDataset = {
   users: UserProfile[]
   cps: ContractorPartner[]
@@ -238,6 +290,7 @@ export type AppDataset = {
   sharedConstructionProjects: SharedConstructionProject[]
   barterProjectMatches: BarterProjectMatch[]
   agreements: Agreement[]
+  vmUpdates: VmUpdate[]
   notifications: Notification[]
 }
 
@@ -249,14 +302,24 @@ export type LeadSubmissionInput = {
   projectValueCr: number
   selectedModel: PartnershipModel
   notes: string
+  requirementSummary?: string
+  reasonForNotProceeding?: string
 }
 
 export type IsDispositionInput = {
   leadId: string
   callStatus: CallStatus
-  interestStatus: InterestStatus
-  temperature: LeadTemperature
-  comment: string
+  interestStatus?: InterestStatus
+  temperature?: LeadTemperature
+  reason?: string
+  detailedComment?: string
+  expectedConcern?: string
+  nextPossibleAction?: string
+  expectedTimeline?: string
+  budgetRange?: string
+  expectedProjectValueCr?: number
+  requirementSummary?: string
+  comment?: string
   nextFollowUpDate?: string
   qualifyLead: boolean
 }
@@ -268,23 +331,44 @@ export type ScheduleMeetingInput = {
   time: string
   mode: MeetingMode
   notes: string
+  rescheduleReason?: string
 }
 
 export type NewCpInput = {
+  contractorId?: string
   cpName: string
-  companyName: string
+  companyName?: string
+  email: string
   phone: string
   city: string
-  pincode: string
-  portfolioValueCr: number
-  primaryScope: string
-  tier: string
-  remarks: string
+  pincode?: string
+  userType?: string
+  totalCrn?: number
+  runningCrn?: number
+  totalProjectValue?: number
+  lowestPercentageCompleted?: number
+  primaryScope?: string
+  tier?: string
+  bmsPriority?: string
+  remarks?: string
 }
 
 export type AgreementUpdateInput = {
+  id?: string // The agreement ID
   contractorId: string
-  status: AgreementStatus
+  status?: 'Pending' | 'Sent' | 'Signed' | 'Done'
+  signedDate?: string
+  signerName?: string
+  signerEmail?: string
+  signedContent?: string
+  // Onboarding workflow update
+  vmOwner?: string
+  callStatus?: string
+  meetingStatus?: string
+  meetingScheduledDate?: string
+  alignedForActivation?: 'Yes' | 'No'
+  modeOfMeeting?: 'Online' | 'Offline'
+  readyForSigning?: 'Yes' | 'No'
 }
 
 export type CommercialStageInput = {

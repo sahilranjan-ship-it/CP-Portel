@@ -1,881 +1,721 @@
 import { supabase } from '../lib/supabase'
 import type {
-  Agreement,
-  AppDataset,
-  BarterMatchInput,
-  BarterProjectMatch,
-  CommercialStageInput,
-  CommercialValuesInput,
-  ContractorPartner,
-  IncentivePaymentInput,
-  Incentive,
-  IsUpdate,
-  Lead,
-  Meeting,
-  Notification,
-  SharedConstructionInput,
-  SharedConstructionProject,
-  UserProfile,
+    AppDataset,
+    ContractorPartner,
+    Lead,
+    Role,
+    UserProfile,
 } from '../types/domain'
 import type { AppRepository } from './repository'
 import { generateCode, todayIso } from './repository-utils'
-import { buildSupabaseIncentivePayload } from './commercial-utils'
+import type { SessionUser } from '../lib/supabase'
 
 function requireSupabase() {
-  if (!supabase) {
-    throw new Error('Supabase is not configured.')
-  }
-  return supabase
+    if (!supabase) {
+        throw new Error('Supabase is not configured.')
+    }
+    return supabase
 }
 
 function inferBucket(stage: Lead['currentStage'], baStatus: Lead['baStatus']): Lead['bucket'] {
-  if (baStatus === 'Collected') return 'Won Leads'
-  if (stage === 'Rejected' || stage === 'Non-Interested') return 'Rejected Leads'
-  if (stage === 'Inactive') return 'Inactive Leads'
-  return 'Active Leads'
+    if (baStatus === 'Collected') return 'Won Leads'
+    if (stage === 'Rejected' || (stage as string) === 'Non-Interested') return 'Rejected Leads'
+    if (stage === 'Inactive') return 'Inactive Leads'
+    return 'Active Leads'
 }
 
 function inferTemperature(value?: string): Lead['temperature'] {
-  if (value === 'Hot' || value === 'Warm' || value === 'Pre-Cold' || value === 'Cold') {
-    return value
-  }
-  return 'Warm'
+    if (value === 'Hot' || value === 'Warm' || value === 'Pre-Cold' || value === 'Cold') {
+        return value
+    }
+    return 'Warm'
 }
 
 async function loadDataset(): Promise<AppDataset> {
-  const client = requireSupabase()
-  const [
-    usersResponse,
-    cpsResponse,
-    leadsResponse,
-    isUpdatesResponse,
-    meetingsResponse,
-    incentivesResponse,
-    projectsResponse,
-    agreementsResponse,
-    notificationsResponse,
-  ] = await Promise.all([
-    client.from('user_master').select('*').order('created_at', { ascending: false }),
-    client.from('cp_master').select('*').order('created_at', { ascending: false }),
-    client.from('lead_master').select('*').order('submitted_at', { ascending: false }),
-    client.from('is_updates').select('*').order('created_at', { ascending: false }),
-    client.from('meeting_master').select('*').order('created_at', { ascending: false }),
-    client.from('incentive_master').select('*').order('created_at', { ascending: false }),
-    client.from('project_master').select('*').order('created_at', { ascending: false }),
-    client.from('agreement_master').select('*').order('created_at', { ascending: false }),
-    client.from('notification_master').select('*').order('created_at', { ascending: false }),
-  ])
+    const client = requireSupabase()
+    const [
+        usersResponse,
+        cpsResponse,
+        leadsResponse,
+        isUpdatesResponse,
+        meetingsResponse,
+        incentivesResponse,
+        projectsResponse,
+        agreementsResponse,
+        vmUpdatesResponse,
+        notificationsResponse,
+    ] = await Promise.all([
+        client.from('user_master').select('*').order('created_at', { ascending: false }),
+        client.from('cp_master').select('*').order('created_at', { ascending: false }),
+        client.from('lead_master').select('*').order('submitted_at', { ascending: false }),
+        client.from('is_updates').select('*').order('created_at', { ascending: false }),
+        client.from('meeting_master').select('*').order('created_at', { ascending: false }),
+        client.from('incentive_master').select('*').order('created_at', { ascending: false }),
+        client.from('project_master').select('*').order('created_at', { ascending: false }),
+        client.from('agreement_master').select('*').order('created_at', { ascending: false }),
+        client.from('vm_updates').select('*').order('created_at', { ascending: false }),
+        client.from('notification_master').select('*').order('created_at', { ascending: false }),
+    ])
 
-  const responses = [
-    usersResponse,
-    cpsResponse,
-    leadsResponse,
-    isUpdatesResponse,
-    meetingsResponse,
-    incentivesResponse,
-    projectsResponse,
-    agreementsResponse,
-    notificationsResponse,
-  ]
-  const error = responses.find((response) => response.error)?.error
-  if (error) throw error
+    const responses = [
+        usersResponse,
+        cpsResponse,
+        leadsResponse,
+        isUpdatesResponse,
+        meetingsResponse,
+        incentivesResponse,
+        projectsResponse,
+        agreementsResponse,
+        vmUpdatesResponse,
+        notificationsResponse,
+    ]
+    // Log individual query errors without aborting — a single RLS block shouldn't wipe all data
+    const tableNames = ['user_master', 'cp_master', 'lead_master', 'is_updates', 'meeting_master', 'incentive_master', 'project_master', 'agreement_master', 'vm_updates', 'notification_master']
+    responses.forEach((r, i) => { if (r.error) console.error(`[loadDataset] ${tableNames[i]} query failed:`, r.error.message) })
 
-  const userRows = usersResponse.data ?? []
-  const cpRows = cpsResponse.data ?? []
-  const leadRows = leadsResponse.data ?? []
-  const isRows = isUpdatesResponse.data ?? []
-  const meetingRows = meetingsResponse.data ?? []
-  const incentiveRows = incentivesResponse.data ?? []
-  const projectRows = projectsResponse.data ?? []
-  const agreementRows = agreementsResponse.data ?? []
-  const notificationRows = notificationsResponse.data ?? []
+    const userRows = usersResponse.data ?? []
+    const cpRows = cpsResponse.data ?? []
+    const leadRows = leadsResponse.data ?? []
+    const isRows = isUpdatesResponse.data ?? []
+    const meetingRows = meetingsResponse.data ?? []
+    const incentiveRows = incentivesResponse.data ?? []
+    const projectRows = projectsResponse.data ?? []
+    const agreementRows = agreementsResponse.data ?? []
+    const vmUpdateRows = vmUpdatesResponse.data ?? []
+    const notificationRows = notificationsResponse.data ?? []
 
-  const users: UserProfile[] = userRows.map((row) => ({
-    id: row.auth_user_id ?? row.id,
-    fullName: row.full_name,
-    email: row.email,
-    role: row.role,
-    city: row.city ?? '',
-    phone: row.phone ?? '',
-  }))
+    // Keyed by user_master.id (PK) for FK lookups (is_owner_id, vm_owner_id, etc.)
+    const usersByMasterId = new Map<string, string>(
+        userRows.map((row) => [row.id as string, row.full_name as string])
+    )
 
-  const cpIdToCode = new Map<string, string>()
-  const cpCodeToName = new Map<string, string>()
-  const cps: ContractorPartner[] = cpRows.map((row) => {
-    cpIdToCode.set(row.id, row.cp_code)
-    cpCodeToName.set(row.cp_code, row.cp_name)
+    const users: UserProfile[] = userRows.map((row) => ({
+        id: row.auth_user_id ?? row.id,
+        fullName: row.full_name,
+        email: row.email,
+        role: row.role.toLowerCase() as Role,
+        city: row.city ?? '',
+        phone: row.phone ?? '',
+    }))
 
-    return {
-      id: row.cp_code,
-      name: row.cp_name,
-      companyName: row.company_name ?? '',
-      city: row.city,
-      activeSince: row.active_since ?? todayIso(),
-      primaryScope: row.primary_scope ?? '',
-      phone: row.phone,
-      spoc: row.spoc_name ?? '',
-      vmOwner: row.vm_owner_id ?? '',
-      tier: row.tier ?? '',
-      activeProjects: row.active_projects ?? 0,
-      completedProjects: row.completed_projects ?? 0,
-      heldProjects: row.held_projects ?? 0,
-      totalProjectValueCr: Number(row.total_portfolio_value_cr ?? 0),
-      totalAssignedProjects: row.total_assigned_projects ?? 0,
-      averageCsat: Number(row.average_csat ?? 0),
-      averageDelayDays: row.average_delay_days ?? 0,
-      bmsPriority: row.bms_priority ?? 'Medium',
-      eligibleForProject: Boolean(row.eligible_for_project),
-      initProjectCount: row.init_project_count ?? 0,
-      leadsReceived: 0,
-      linkedUserId: row.linked_user_id ?? undefined,
-    }
-  })
-
-  const leads: Lead[] = leadRows.map((row) => ({
-    id: row.lead_code,
-    name: row.lead_name,
-    phone: row.lead_number,
-    city: row.lead_city,
-    projectType: row.project_type,
-    selectedModel: row.selected_model,
-    projectValueCr: Number(row.approximate_project_value_cr ?? 0),
-    proposalValueCr: row.proposal_value_cr ? Number(row.proposal_value_cr) : undefined,
-    finalProjectValueCr: row.final_project_value_cr ? Number(row.final_project_value_cr) : undefined,
-    currentStage: row.current_stage,
-    temperature: inferTemperature(row.lead_temperature),
-    bucket: inferBucket(row.current_stage, row.ba_status ?? 'Pending'),
-    cpId: cpIdToCode.get(row.cp_id) ?? row.cp_id,
-    cpName: cpCodeToName.get(cpIdToCode.get(row.cp_id) ?? '') ?? '',
-    isOwner: userRows.find((userRow) => userRow.id === row.is_owner_id)?.full_name ?? '',
-    schedulingOwner: userRows.find((userRow) => userRow.id === row.scheduling_owner_id)?.full_name ?? undefined,
-    assignedOs: undefined,
-    submittedAt: row.submitted_at,
-    lastUpdatedAt: row.last_updated_at,
-    nextAction: row.current_stage === 'Qualified' ? 'Send to Scheduling Team' : 'Continue workflow',
-    crnNumber: row.crn_number ?? undefined,
-    baStatus: row.ba_status ?? 'Pending',
-    requirementSummary: row.requirement_summary ?? '',
-    comment: row.additional_notes ?? undefined,
-  }))
-
-  const isUpdates: IsUpdate[] = isRows.map((row) => {
-    const matchingLead = leadRows.find((leadRow) => leadRow.id === row.lead_id)
-    return {
-      leadId: matchingLead?.lead_code ?? row.lead_id,
-      status: row.call_status,
-      interestStatus: row.interest_status ?? undefined,
-      reason: row.reason ?? undefined,
-      detailedComment: row.detailed_comment ?? undefined,
-      expectedConcern: row.expected_concern ?? undefined,
-      nextPossibleAction: row.next_possible_action ?? undefined,
-      nextFollowUpDate: row.next_follow_up_date ?? undefined,
-      comment: row.comment ?? undefined,
-    }
-  })
-
-  const meetings: Meeting[] = meetingRows.map((row) => {
-    const matchingLead = leadRows.find((leadRow) => leadRow.id === row.lead_id)
-    return {
-      id: row.id,
-      leadId: matchingLead?.lead_code ?? row.lead_id,
-      assignedOs: row.assigned_os,
-      date: row.meeting_date,
-      time: row.meeting_time,
-      mode: row.meeting_mode,
-      status: row.status,
-      notes: row.meeting_notes ?? '',
-      rescheduleReason: row.reschedule_reason ?? undefined,
-    }
-  })
-
-  const incentives: Incentive[] = incentiveRows.map((row) => {
-    const matchingLead = leadRows.find((leadRow) => leadRow.id === row.lead_id)
-    const cpCode = cpIdToCode.get(row.cp_id) ?? row.cp_id
-    return {
-      id: row.id,
-      leadId: matchingLead?.lead_code ?? row.lead_id,
-      cpId: cpCode,
-      leadName: matchingLead?.lead_name ?? 'Lead',
-      cpName: cpCodeToName.get(cpCode) ?? 'CP',
-      selectedModel: row.selected_model,
-      projectValueCr: Number(row.project_value_cr ?? 0),
-      incentivePercent: Number(row.incentive_percent ?? 0),
-      incentiveAmountLakh: Number(row.incentive_amount ?? 0),
-      paymentStatus: row.payment_status,
-      paymentDate: row.payment_date ?? undefined,
-      pendingDays: row.pending_days ?? 0,
-    }
-  })
-
-  const sharedConstructionProjects: SharedConstructionProject[] = projectRows
-    .filter((row) => row.partnership_model === 'Shared Construction')
-    .map((row) => {
-      const cpCode = cpIdToCode.get(row.cp_id) ?? row.cp_id
-      const matchingLead = leadRows.find((leadRow) => leadRow.id === row.lead_id)
-      const allocationPercent = Number(String(row.status).match(/(\d+)%/)?.[1] ?? 15)
-      const projectedProfitLakh = Number(row.project_value_cr ?? 0) * 100 * (allocationPercent / 100) * 0.3
-      return {
-        id: row.id,
-        leadId: matchingLead?.lead_code ?? row.lead_id,
-        cpId: cpCode,
-        leadName: matchingLead?.lead_name ?? row.project_name,
-        cpName: cpCodeToName.get(cpCode) ?? 'CP',
-        allocationPercent,
-        executionStatus: String(row.status).includes('Completed')
-          ? 'Completed'
-          : String(row.status).includes('Execution')
-            ? 'Execution'
-            : String(row.status).includes('Mobilization')
-              ? 'Mobilization'
-              : 'Planning',
-        projectedProfitLakh,
-        createdAt: row.created_at,
-      }
+    const cps: ContractorPartner[] = cpRows.map((c) => {
+        const vmOwnerName = usersByMasterId.get(c.vm_owner_id) ?? 'Assigned Soon'
+        return {
+            id: c.id,
+            code: c.cp_code,
+            name: c.cp_name,
+            companyName: c.company_name,
+            city: c.city,
+            phone: c.phone,
+            activeSince: c.created_at,
+            primaryScope: c.primary_scope,
+            spoc: c.spoc_name,
+            vmOwner: vmOwnerName,
+            vmOwnerId: c.vm_owner_id ?? undefined,   // FK so VM dashboard can filter its own portfolio
+            tier: c.tier,
+            activeProjects: c.active_projects || 0,
+            completedProjects: c.completed_projects || 0,
+            heldProjects: c.held_projects || 0,
+            totalProjectValueCr: c.total_portfolio_value_cr || 0,
+            totalAssignedProjects: c.total_assigned_projects || 0,
+            averageCsat: c.average_csat || 0,
+            averageDelayDays: c.average_delay_days || 0,
+            bmsPriority: (c.bms_priority || 'Medium') as any,
+            eligibleForProject: c.eligible_for_project,
+            initProjectCount: c.init_project_count || 0,
+            leadsReceived: 0,
+            email: c.email,
+            userType: c.user_type || 'CONTRACTOR',
+            lowestPercentageCompleted: c.lowest_percentage_completed || 0,
+            linkedUserId: c.linked_user_id,
+            onboardingVmName: c.onboarding_vm_name,
+            onboardingCallStatus: c.onboarding_call_status,
+            onboardingMeetingStatus: c.onboarding_meeting_status,
+            onboardingMeetingScheduledDate: c.onboarding_meeting_scheduled_date,
+            onboardingAlignedForActivation: c.onboarding_aligned_for_activation,
+            onboardingModeOfMeeting: c.onboarding_mode_of_meeting,
+            onboardingCpReadyForSigning: c.onboarding_cp_ready_for_signing,
+            onboardingAgreementSentStatus: c.onboarding_agreement_sent_status,
+            onboardingCpSignedStatus: c.onboarding_cp_signed_status,
+            onboardingSignedAgreementUrl: c.onboarding_signed_agreement_url,
+        }
     })
 
-  const barterProjectMatches: BarterProjectMatch[] = projectRows
-    .filter((row) => row.partnership_model === 'Barter / Exchange')
-    .map((row) => {
-      const cpCode = cpIdToCode.get(row.cp_id) ?? row.cp_id
-      const matchingLead = leadRows.find((leadRow) => leadRow.id === row.lead_id)
-      const notes = String(row.status)
-      const expectedTimelineDays = Number(notes.match(/(\d+)\s*days/i)?.[1] ?? 10)
-      const matchStatus = notes.includes('Matched')
-        ? 'Matched'
-        : notes.includes('Matching')
-          ? 'Matching'
-          : 'Match Pending'
-      return {
-        id: row.id,
-        leadId: matchingLead?.lead_code ?? row.lead_id,
-        cpId: cpCode,
-        leadName: matchingLead?.lead_name ?? row.project_name,
-        cpName: cpCodeToName.get(cpCode) ?? 'CP',
-        matchStatus,
-        expectedTimelineDays,
-        notes,
-        createdAt: row.created_at,
-      }
+    const leads: Lead[] = leadRows.map((l) => {
+        const cp = cps.find((c) => c.id === l.cp_id)
+        return {
+            id: l.id,
+            name: l.lead_name,
+            phone: l.lead_number,
+            city: l.lead_city,
+            projectType: l.project_type,
+            selectedModel: l.selected_model,
+            projectValueCr: l.approximate_project_value_cr,
+            proposalValueCr: l.proposal_value_cr,
+            finalProjectValueCr: l.final_project_value_cr,
+            currentStage: l.current_stage,
+            temperature: inferTemperature(l.lead_temperature),
+            bucket: inferBucket(l.current_stage, l.ba_status),
+            cpId: l.cp_id,
+            cpName: cp?.name ?? 'Unknown',
+            // Populate CP contact fields from the joined cp_master row
+            cpEmail: cp?.email,
+            cpPhone: cp?.phone,
+            isOwner: usersByMasterId.get(l.is_owner_id) ?? 'Unassigned',
+            // Resolve scheduling_owner_id FK to a name
+            schedulingOwner: usersByMasterId.get(l.scheduling_owner_id),
+            submittedAt: l.submitted_at,
+            lastUpdatedAt: l.last_updated_at,
+            crnNumber: l.crn_number,
+            baStatus: (l.ba_status ?? 'Pending') as Lead['baStatus'],
+            requirementSummary: l.requirement_summary,
+            reasonForNotProceeding: l.reason_for_not_proceeding,
+            nextAction: 'None',
+        }
     })
 
-  const agreements: Agreement[] = agreementRows.map((row) => {
-    const cpCode = cpIdToCode.get(row.cp_id) ?? row.cp_id
     return {
-      id: row.id,
-      contractorId: cpCode,
-      cpName: cpCodeToName.get(cpCode) ?? 'CP',
-      sentDate: row.agreement_sent_date,
-      status: row.agreement_status,
-      signedDate: row.signed_date ?? undefined,
-      spotdraftStatus: row.spotdraft_link_status ?? 'Ready',
-      vmOwner: row.vm_owner_id ?? '',
+        users,
+        cps,
+        leads,
+        isUpdates: isRows.map(r => ({
+            leadId: r.lead_id,
+            status: r.call_status,
+            interestStatus: r.interest_status,
+            reason: r.reason,
+            detailedComment: r.detailed_comment,
+            expectedConcern: r.expected_concern,
+            nextPossibleAction: r.next_possible_action,
+            nextFollowUpDate: r.next_follow_up_date,
+            comment: r.comment
+        })),
+        meetings: meetingRows.map(m => ({
+            id: m.id,
+            leadId: m.lead_id,
+            assignedOs: m.assigned_os,
+            date: m.meeting_date,
+            time: m.meeting_time,
+            status: m.status,
+            mode: m.meeting_mode,
+            notes: m.meeting_notes,
+            rescheduleReason: m.reschedule_reason
+        })),
+        incentives: incentiveRows.map(i => {
+            const lead = leads.find(l => l.id === i.lead_id)
+            // incentive_master has no cp_name column — join from cps
+            const incentiveCp = cps.find(c => c.id === i.cp_id)
+            return {
+                id: i.id,
+                leadId: i.lead_id,
+                cpId: i.cp_id,
+                leadName: lead?.name ?? 'Unknown',
+                cpName: incentiveCp?.name ?? 'Unknown',
+                selectedModel: i.selected_model,
+                projectValueCr: i.project_value_cr,
+                incentivePercent: i.incentive_percent,
+                incentiveAmountLakh: i.incentive_amount,
+                paymentStatus: i.payment_status,
+                paymentDate: i.payment_date,
+                pendingDays: i.pending_days
+            }
+        }),
+        sharedConstructionProjects: projectRows.filter(p => p.partnership_model === 'Shared Construction').map(p => {
+            const cp = cps.find(c => c.id === p.cp_id)
+            const lead = leads.find(l => l.id === p.lead_id)
+            return {
+                id: p.id,
+                cpId: p.cp_id || '',
+                leadId: p.lead_id || '',
+                leadName: lead?.name || p.project_name,
+                cpName: cp?.name || 'CP',
+                allocationPercent: 100,
+                // project_value_cr stores projectedProfitLakh directly (set by upsertSharedConstructionProject)
+                executionStatus: p.status as import('../types/domain').SharedConstructionProject['executionStatus'],
+                projectedProfitLakh: p.project_value_cr || 0,
+                createdAt: p.created_at
+            }
+        }),
+        barterProjectMatches: projectRows.filter(p => p.partnership_model === 'Barter').map(p => {
+            const cp = cps.find(c => c.id === p.cp_id)
+            const lead = leads.find(l => l.id === p.lead_id)
+            return {
+                id: p.id,
+                cpId: p.cp_id || '',
+                leadId: p.lead_id || '',
+                leadName: lead?.name || p.project_name,
+                cpName: cp?.name || 'CP',
+                // Read actual status from DB instead of hardcoding 'Matched'
+                matchStatus: p.status as import('../types/domain').BarterProjectMatch['matchStatus'],
+                expectedTimelineDays: 14,
+                notes: '',
+                createdAt: p.created_at
+            }
+        }),
+        agreements: agreementRows.map(ag => {
+            const agCp = cps.find(c => c.id === ag.cp_id)
+            const vmOwnerName = usersByMasterId.get(ag.vm_owner_id) ?? 'VM'
+            return {
+                id: ag.id,
+                contractorId: ag.cp_id,
+                cpName: agCp?.name ?? 'CP',
+                cpEmail: agCp?.email,
+                sentDate: ag.agreement_sent_date,
+                status: ag.agreement_status,
+                signedDate: ag.signed_date,
+                spotdraftStatus: (ag.spotdraft_link_status ?? 'Ready') as import('../types/domain').Agreement['spotdraftStatus'],
+                vmOwner: vmOwnerName,
+            }
+        }),
+        vmUpdates: vmUpdateRows.map(v => ({
+            id: v.id,
+            cpId: v.cp_id,
+            // Resolve FK to name; domain type is vmOwner (string), not vmOwnerId (uuid)
+            vmOwner: usersByMasterId.get(v.vm_owner_id),
+            callStatus: v.call_status,
+            meetingStatus: v.meeting_status,
+            meetingScheduledDate: v.meeting_scheduled_date,
+            // DB stores boolean; domain type expects 'Yes' | 'No'
+            alignedForActivation: v.aligned_for_activation ? 'Yes' : 'No',
+            // DB column is meeting_mode; domain field is modeOfMeeting
+            modeOfMeeting: v.meeting_mode,
+            agreementSigningStatus: v.agreement_signing_status ?? 'Pending',
+            leadsReceived: v.leads_received ?? 0,
+            remarks: v.remarks,
+            createdAt: v.created_at
+        })),
+        notifications: notificationRows.map(n => ({
+            id: n.id,
+            title: n.title,
+            detail: n.detail,
+            audience: n.audience,
+            severity: n.severity,
+            createdAt: n.created_at
+        }))
     }
-  })
-
-  const notifications: Notification[] = notificationRows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    detail: row.detail,
-    audience: row.audience ?? 'all',
-    severity: row.severity,
-    createdAt: row.created_at,
-  }))
-
-  return { users, cps, leads, isUpdates, meetings, incentives, sharedConstructionProjects, barterProjectMatches, agreements, notifications }
 }
 
-async function findCpRowIdByCode(cpCode: string) {
-  const client = requireSupabase()
-  const { data, error } = await client
-    .from('cp_master')
-    .select('id')
-    .eq('cp_code', cpCode)
-    .single()
-  if (error) throw error
-  return data.id as string
-}
 
-async function findLeadRowByCode(leadCode: string) {
-  const client = requireSupabase()
-  const { data, error } = await client
-    .from('lead_master')
-    .select('id, lead_name')
-    .eq('lead_code', leadCode)
-    .single()
-  if (error) throw error
-  return data as { id: string; lead_name: string }
-}
-
-async function findUserRowIdByFullName(fullName: string) {
-  const client = requireSupabase()
-  const { data, error } = await client
-    .from('user_master')
-    .select('id')
-    .eq('full_name', fullName)
-    .limit(1)
-    .maybeSingle()
-  if (error) throw error
-  return data?.id as string | undefined
-}
-
-async function findDefaultUserRowIdByRole(role: string) {
-  const client = requireSupabase()
-  const { data, error } = await client
-    .from('user_master')
-    .select('id')
-    .eq('role', role)
-    .limit(1)
-    .maybeSingle()
-  if (error) throw error
-  return data?.id as string | undefined
-}
-
-async function insertNotification(
-  title: string,
-  detail: string,
-  audience: Notification['audience'],
-  severity: Notification['severity'],
-) {
-  const client = requireSupabase()
-  const { error } = await client.from('notification_master').insert({
-    title,
-    detail,
-    audience: audience === 'all' ? null : audience,
-    severity,
-  })
-  if (error) throw error
+async function insertNotification(title: string, detail: string, audience: Role | 'all', severity: 'info' | 'warn' | 'critical' = 'info') {
+    const client = requireSupabase()
+    await client.from('notification_master').insert({
+        title,
+        detail,
+        audience: audience === 'all' ? null : audience,
+        severity
+    })
 }
 
 export const supabaseRepository: AppRepository = {
-  async loadDataset() {
-    return loadDataset()
-  },
-  async submitLead(input, sessionUser) {
-    const client = requireSupabase()
-    const cp = await client
-      .from('cp_master')
-      .select('id, cp_code, cp_name')
-      .eq('cp_name', sessionUser.name)
-      .limit(1)
-      .maybeSingle()
-    if (cp.error) throw cp.error
-    const cpRow = cp.data
-    if (!cpRow) {
-      throw new Error(`No CP master row found for ${sessionUser.name}.`)
-    }
+    loadDataset,
+    async submitLead(input, sessionUser) {
+        const client = requireSupabase()
+        // Use sessionUser.userMasterId (user_master.id) directly — no extra DB round-trip
+        const { data: cp } = await client
+            .from('cp_master')
+            .select('id, cp_name')
+            .eq('linked_user_id', sessionUser.userMasterId)
+            .single()
 
-    const { error } = await client.from('lead_master').insert({
-      lead_code: generateCode('LD'),
-      cp_id: cpRow.id,
-      is_owner_id: await findDefaultUserRowIdByRole('is'),
-      lead_name: input.name,
-      lead_number: input.phone,
-      lead_city: input.city,
-      project_type: input.projectType,
-      approximate_project_value_cr: input.projectValueCr,
-      selected_model: input.selectedModel,
-      current_stage: 'Lead Shared',
-      lead_temperature: 'Warm',
-      additional_notes: input.notes,
-      requirement_summary: input.notes,
-    })
-    if (error) throw error
+        const leadCode = generateCode('LD')
+        const { error } = await client.from('lead_master').insert({
+            lead_code: leadCode,
+            cp_id: cp?.id,
+            lead_name: input.name,
+            lead_number: input.phone,
+            lead_city: input.city,
+            project_type: input.projectType,
+            approximate_project_value_cr: input.projectValueCr,
+            selected_model: input.selectedModel,
+        })
+        if (error) throw error
 
-    await insertNotification(
-      'New lead assigned to IS',
-      `${input.name} from ${input.city} was submitted by ${cpRow.cp_name}.`,
-      'is',
-      'info',
-    )
+        await insertNotification(
+            'New Lead Received',
+            `New lead ${input.name} has been submitted by ${cp?.cp_name}.`,
+            'is'
+        )
 
-    return loadDataset()
-  },
-  async createVmLead(input, sessionUser) {
-    const client = requireSupabase()
-    const cpRowId = await findCpRowIdByCode(input.cpId)
+        return loadDataset()
+    },
+    async createVmLead(input, sessionUser) {
+        const client = requireSupabase()
+        const leadCode = generateCode('LD')
+        const { error } = await client.from('lead_master').insert({
+            lead_code: leadCode,
+            cp_id: input.cpId,
+            lead_name: input.name,
+            lead_number: input.phone,
+            lead_city: input.city,
+            project_type: input.projectType,
+            approximate_project_value_cr: input.projectValueCr,
+            selected_model: input.selectedModel,
+            current_stage: 'Lead Shared',
+            requirement_summary: input.notes ?? null,          // VmLeadInput uses 'notes'
+            reason_for_not_proceeding: input.reasonForNotProceeding ?? null,
+        })
+        if (error) throw error
 
-    const { error } = await client.from('lead_master').insert({
-      lead_code: generateCode('LD'),
-      cp_id: cpRowId,
-      is_owner_id: await findDefaultUserRowIdByRole('is'),
-      lead_name: input.name,
-      lead_number: input.phone,
-      lead_city: input.city,
-      project_type: input.projectType,
-      approximate_project_value_cr: input.projectValueCr,
-      selected_model: input.selectedModel,
-      current_stage: 'Lead Shared',
-      lead_temperature: 'Warm',
-      additional_notes: input.notes,
-      requirement_summary: input.notes,
-    })
-    if (error) throw error
+        return loadDataset()
+    },
+    async updateIsDisposition(input, sessionUser) {
+        const client = requireSupabase()
 
-    await insertNotification(
-      'Referral captured by VM',
-      `${input.name} was created for ${input.cpId} by ${sessionUser.name}.`,
-      'vm',
-      'info',
-    )
+        // Update lead stage — use userMasterId directly (user_master.id FK)
+        const { error: leadError } = await client
+            .from('lead_master')
+            .update({
+                current_stage: input.qualifyLead ? 'Qualified' : input.callStatus,
+                is_owner_id: sessionUser.userMasterId,
+                last_updated_at: new Date().toISOString()
+            })
+            .eq('id', input.leadId)
+        if (leadError) throw leadError
 
-    await insertNotification(
-      'New lead assigned to IS',
-      `${input.name} from ${input.city} is ready for qualification.`,
-      'is',
-      'info',
-    )
+        // Insert update history
+        await client.from('is_updates').insert({
+            lead_id: input.leadId,
+            is_owner_id: sessionUser.userMasterId,
+            call_status: input.callStatus,
+            interest_status: input.interestStatus,
+            reason: input.reason,
+            detailed_comment: input.detailedComment,
+            expected_concern: input.expectedConcern,
+            next_possible_action: input.nextPossibleAction,
+            expected_timeline: input.expectedTimeline,
+            budget_range: input.budgetRange,
+            expected_project_value_cr: input.expectedProjectValueCr,
+            next_follow_up_date: input.nextFollowUpDate,
+            comment: input.comment
+        })
 
-    return loadDataset()
-  },
-  async updateIsDisposition(input, sessionUser) {
-    const client = requireSupabase()
-    const leadRow = await findLeadRowByCode(input.leadId)
-    const qualified = input.qualifyLead && input.interestStatus === 'Interested'
-    const stage = qualified
-      ? 'Qualified'
-      : input.interestStatus === 'Non-Interested'
-        ? 'Non-Interested'
-        : 'Calling Attempt'
-    const crnNumber = qualified ? generateCode('CRN') : null
+        return loadDataset()
+    },
+    async scheduleMeeting(input, sessionUser) {
+        const client = requireSupabase()
 
-    const isOwner = await client
-      .from('user_master')
-      .select('id')
-      .eq('full_name', sessionUser.name)
-      .limit(1)
-      .maybeSingle()
-    if (isOwner.error) throw isOwner.error
+        const { error } = await client.from('meeting_master').insert({
+            lead_id: input.leadId,
+            assigned_os: input.assignedOs,
+            meeting_date: input.date,
+            meeting_time: input.time,
+            meeting_mode: input.mode,
+            status: 'Meeting Scheduled',
+            meeting_notes: input.notes
+        })
+        if (error) throw error
 
-    const { error: leadError } = await client
-      .from('lead_master')
-      .update({
-        current_stage: stage,
-        lead_temperature: input.temperature,
-        crn_number: crnNumber,
-        is_owner_id: isOwner.data?.id ?? null,
-        last_updated_at: new Date().toISOString(),
-      })
-      .eq('id', leadRow.id)
-    if (leadError) throw leadError
+        // Use userMasterId directly — no extra DB round-trip needed
+        await client.from('lead_master').update({
+            current_stage: 'Meeting Scheduled',
+            scheduling_owner_id: sessionUser.userMasterId
+        }).eq('id', input.leadId)
 
-    const payload = {
-      lead_id: leadRow.id,
-      is_owner_id: isOwner.data?.id ?? null,
-      call_status: input.callStatus,
-      interest_status: input.interestStatus,
-      comment: input.comment,
-      next_follow_up_date: input.nextFollowUpDate || null,
-    }
+        return loadDataset()
+    },
+    async createCp(input, sessionUser) {
+        const client = requireSupabase()
+        const cpCode = input.contractorId || generateCode('CP')
+        const { data: cpInsert, error: cpError } = await client
+            .from('cp_master')
+            .insert({
+                id: crypto.randomUUID(),
+                cp_code: cpCode,
+                cp_name: input.cpName,
+                company_name: input.companyName,
+                city: input.city,
+                pincode: input.pincode,
+                phone: input.phone,
+                email: input.email,
+                user_type: input.userType || 'CONTRACTOR',
+                total_assigned_projects: input.totalCrn || 0,
+                active_projects: input.runningCrn || 0,
+                total_portfolio_value_cr: input.totalProjectValue || 0,
+                lowest_percentage_completed: input.lowestPercentageCompleted || 0,
+                primary_scope: input.primaryScope,
+                tier: input.tier || 'Platinum',
+                bms_priority: input.bmsPriority || 'Medium',
+                vm_owner_id: sessionUser.userMasterId,
+                spoc_name: sessionUser.name,
+                remarks: input.remarks || ('New CP Created ' + todayIso())
+            })
+            .select('id')
+            .single()
+        if (cpError) throw cpError
 
-    const { data: existing, error: existingError } = await client
-      .from('is_updates')
-      .select('id')
-      .eq('lead_id', leadRow.id)
-      .limit(1)
-      .maybeSingle()
-    if (existingError) throw existingError
+        await client.from('agreement_master').insert({
+            cp_id: cpInsert.id,
+            agreement_sent_date: todayIso(),
+            agreement_status: 'Pending',
+            spotdraft_link_status: 'Ready',
+            vm_owner_id: sessionUser.userMasterId,
+        })
 
-    if (existing?.id) {
-      const { error } = await client.from('is_updates').update(payload).eq('id', existing.id)
-      if (error) throw error
-    } else {
-      const { error } = await client.from('is_updates').insert(payload)
-      if (error) throw error
-    }
+        return loadDataset()
+    },
+    async updateCp(id, input, sessionUser) {
+        const client = requireSupabase()
+        const { error } = await client
+            .from('cp_master')
+            .update({
+                cp_name: input.cpName,
+                company_name: input.companyName,
+                city: input.city,
+                pincode: input.pincode,
+                phone: input.phone,
+                email: input.email,
+                user_type: input.userType || 'CONTRACTOR',
+                total_assigned_projects: input.totalCrn || 0,
+                active_projects: input.runningCrn || 0,
+                total_portfolio_value_cr: input.totalProjectValue || 0,
+                lowest_percentage_completed: input.lowestPercentageCompleted || 0,
+                primary_scope: input.primaryScope,
+                tier: input.tier || 'Platinum',
+                bms_priority: input.bmsPriority || 'Medium',
+                remarks: input.remarks || ('CP Updated ' + todayIso())
+            })
+            .eq('id', id)
+        if (error) throw error
+        return loadDataset()
+    },
+    async updateAgreement(input, sessionUser) {
+        const client = requireSupabase()
 
-    if (qualified) {
-      await insertNotification(
-        'Qualified lead assigned to Scheduling Team',
-        `${leadRow.lead_name} is qualified by ${sessionUser.name} and ready for scheduling.`,
-        'scheduling',
-        'info',
-      )
-    }
-
-    return loadDataset()
-  },
-  async scheduleMeeting(input) {
-    const client = requireSupabase()
-    const leadRow = await findLeadRowByCode(input.leadId)
-    const schedulingOwnerId = await findDefaultUserRowIdByRole('scheduling')
-
-    const { error: leadError } = await client
-      .from('lead_master')
-      .update({
-        current_stage: 'Meeting Scheduled',
-        scheduling_owner_id: schedulingOwnerId ?? null,
-        last_updated_at: new Date().toISOString(),
-      })
-      .eq('id', leadRow.id)
-    if (leadError) throw leadError
-
-    const payload = {
-      lead_id: leadRow.id,
-      assigned_os: input.assignedOs,
-      meeting_date: input.date,
-      meeting_time: input.time,
-      meeting_mode: input.mode,
-      status: 'Meeting Scheduled',
-      meeting_notes: input.notes,
-    }
-
-    const { data: existing, error: existingError } = await client
-      .from('meeting_master')
-      .select('id')
-      .eq('lead_id', leadRow.id)
-      .limit(1)
-      .maybeSingle()
-    if (existingError) throw existingError
-
-    if (existing?.id) {
-      const { error } = await client.from('meeting_master').update(payload).eq('id', existing.id)
-      if (error) throw error
-    } else {
-      const { error } = await client.from('meeting_master').insert(payload)
-      if (error) throw error
-    }
-
-    await insertNotification(
-      'Meeting assigned to OS',
-      `${leadRow.lead_name} is scheduled with ${input.assignedOs} on ${input.date} at ${input.time}.`,
-      'all',
-      'info',
-    )
-
-    return loadDataset()
-  },
-  async createCp(input, sessionUser) {
-    const client = requireSupabase()
-    const owner = await client
-      .from('user_master')
-      .select('id')
-      .eq('full_name', sessionUser.name)
-      .limit(1)
-      .maybeSingle()
-    if (owner.error) throw owner.error
-
-    const cpCode = generateCode('CP')
-    const linkedUserId = await findUserRowIdByFullName(input.cpName)
-    const { data: cpInsert, error: cpError } = await client
-      .from('cp_master')
-      .insert({
-        cp_code: cpCode,
-        cp_name: input.cpName,
-        linked_user_id: linkedUserId ?? null,
-        company_name: input.companyName,
-        city: input.city,
-        pincode: input.pincode,
-        phone: input.phone,
-        primary_scope: input.primaryScope,
-        tier: input.tier,
-        spoc_name: sessionUser.name,
-        vm_owner_id: owner.data?.id ?? null,
-        total_portfolio_value_cr: input.portfolioValueCr,
-        remarks: input.remarks,
-      })
-      .select('id')
-      .single()
-    if (cpError) throw cpError
-
-    const { error: agreementError } = await client.from('agreement_master').insert({
-      cp_id: cpInsert.id,
-      agreement_sent_date: todayIso(),
-      agreement_status: 'Pending',
-      spotdraft_link_status: 'Sent',
-      vm_owner_id: owner.data?.id ?? null,
-    })
-    if (agreementError) throw agreementError
-
-    await insertNotification(
-      'Agreement sent notification to contractor',
-      `${input.cpName} has been added by ${sessionUser.name} and agreement has been initiated.`,
-      'vm',
-      'info',
-    )
-
-    return loadDataset()
-  },
-  async updateAgreement(input, sessionUser) {
-    const client = requireSupabase()
-    const cpRowId = await findCpRowIdByCode(input.contractorId)
-    const { error } = await client
-      .from('agreement_master')
-      .update({
-        agreement_status: input.status,
-        signed_date: input.status === 'Done' ? todayIso() : null,
-        spotdraft_link_status: input.status === 'Done' ? 'Completed' : 'Viewed',
-      })
-      .eq('cp_id', cpRowId)
-    if (error) throw error
-
-    await insertNotification(
-      'Agreement status updated',
-      `${input.contractorId} agreement is now ${input.status} by ${sessionUser.name}.`,
-      'admin',
-      input.status === 'Done' ? 'info' : 'warn',
-    )
-
-    return loadDataset()
-  },
-  async updateCommercialStage(input: CommercialStageInput, sessionUser) {
-    const client = requireSupabase()
-    const leadRow = await findLeadRowByCode(input.leadId)
-
-    const nextBaStatus =
-      input.stage === 'BA Collected'
-        ? 'Collected'
-        : input.stage === 'BA Pending'
-          ? 'Pending'
-          : null
-
-    const { error: leadError } = await client
-      .from('lead_master')
-      .update({
-        current_stage: input.stage,
-        ba_status: nextBaStatus,
-        last_updated_at: new Date().toISOString(),
-      })
-      .eq('id', leadRow.id)
-    if (leadError) throw leadError
-
-    if (input.stage === 'BA Collected') {
-      const { data: leadData, error: leadDataError } = await client
-        .from('lead_master')
-        .select('cp_id, selected_model, approximate_project_value_cr, proposal_value_cr, final_project_value_cr')
-        .eq('id', leadRow.id)
-        .single()
-      if (leadDataError) throw leadDataError
-
-      if (leadData.selected_model === 'Direct Incentive') {
-        const syntheticLead: Lead = {
-          id: input.leadId,
-          name: leadRow.lead_name,
-          phone: '',
-          city: '',
-          projectType: '',
-          selectedModel: leadData.selected_model,
-          projectValueCr: Number(leadData.approximate_project_value_cr ?? 0),
-          proposalValueCr: leadData.proposal_value_cr ? Number(leadData.proposal_value_cr) : undefined,
-          finalProjectValueCr: leadData.final_project_value_cr ? Number(leadData.final_project_value_cr) : undefined,
-          currentStage: input.stage,
-          temperature: 'Warm',
-          bucket: 'Won Leads',
-          cpId: leadData.cp_id,
-          cpName: '',
-          isOwner: '',
-          submittedAt: '',
-          lastUpdatedAt: '',
-          nextAction: '',
-          baStatus: 'Collected',
-          requirementSummary: '',
+        // 1. Update agreement_master for status / signed date
+        const agUpdate: Record<string, any> = {}
+        if (input.status) agUpdate.agreement_status = input.status
+        if (input.status === 'Signed' || input.status === 'Done') {
+            agUpdate.signed_date = todayIso()
+        }
+        if (Object.keys(agUpdate).length > 0) {
+            const { error } = await client
+                .from('agreement_master')
+                .update(agUpdate)
+                .eq('cp_id', input.contractorId)
+            if (error) throw error
         }
 
-        const incentive = buildSupabaseIncentivePayload(syntheticLead)
-
-        const { data: existing, error: existingError } = await client
-          .from('incentive_master')
-          .select('id')
-          .eq('lead_id', leadRow.id)
-          .limit(1)
-          .maybeSingle()
-        if (existingError) throw existingError
-
-        const payload = {
-          lead_id: leadRow.id,
-          cp_id: leadData.cp_id,
-          selected_model: leadData.selected_model,
-          project_value_cr: incentive.projectValueCr,
-          incentive_percent: incentive.incentivePercent,
-          incentive_amount: incentive.incentiveAmount,
-          payment_status: 'Pending',
-          payment_date: incentive.paymentDate,
+        // 2. Update cp_master onboarding fields that arrive with this call
+        const cpUpdate: Record<string, any> = {}
+        if (input.vmOwner !== undefined) cpUpdate.onboarding_vm_name = input.vmOwner
+        if (input.callStatus !== undefined) cpUpdate.onboarding_call_status = input.callStatus
+        if (input.meetingStatus !== undefined) cpUpdate.onboarding_meeting_status = input.meetingStatus
+        if (input.meetingScheduledDate !== undefined) cpUpdate.onboarding_meeting_scheduled_date = input.meetingScheduledDate
+        if (input.alignedForActivation !== undefined) cpUpdate.onboarding_aligned_for_activation = input.alignedForActivation
+        if (input.modeOfMeeting !== undefined) cpUpdate.onboarding_mode_of_meeting = input.modeOfMeeting
+        if (input.readyForSigning !== undefined) cpUpdate.onboarding_cp_ready_for_signing = input.readyForSigning
+        // When CP signs, mark signed status on their cp_master row
+        if (input.status === 'Signed' || input.status === 'Done') {
+            cpUpdate.onboarding_cp_signed_status = 'Done'
+        }
+        if (Object.keys(cpUpdate).length > 0) {
+            await client.from('cp_master').update(cpUpdate).eq('id', input.contractorId)
         }
 
-        if (existing?.id) {
-          const { error } = await client.from('incentive_master').update(payload).eq('id', existing.id)
-          if (error) throw error
+        return loadDataset()
+    },
+    async updateCommercialStage(input, sessionUser) {
+        const client = requireSupabase()
+        const { error } = await client
+            .from('lead_master')
+            .update({ current_stage: input.stage, last_updated_at: new Date().toISOString() })
+            .eq('id', input.leadId)
+        if (error) throw error
+        return loadDataset()
+    },
+    async updateCommercialValues(input, sessionUser) {
+        const client = requireSupabase()
+        const { error } = await client
+            .from('lead_master')
+            .update({
+                proposal_value_cr: input.proposalValueCr,
+                final_project_value_cr: input.finalProjectValueCr,
+                last_updated_at: new Date().toISOString()
+            })
+            .eq('id', input.leadId)
+        if (error) throw error
+        return loadDataset()
+    },
+    async updateIncentivePayment(input, sessionUser) {
+        const client = requireSupabase()
+        const { error } = await client
+            .from('incentive_master')
+            .update({
+                payment_status: input.paymentStatus,
+                payment_date: input.paymentStatus === 'Released' ? todayIso() : null
+            })
+            .eq('id', input.incentiveId)
+        if (error) throw error
+        return loadDataset()
+    },
+    async updateCpOnboarding(input, sessionUser) {
+        const client = requireSupabase()
+        const dbField = input.field.replace(/[A-Z]/g, (m: string) => `_${m.toLowerCase()}`)
+        const { error } = await client
+            .from('cp_master')
+            .update({ [dbField]: input.value })
+            .eq('id', input.cpId)
+        if (error) throw error
+
+        // When VM marks agreement as Sent, also update agreement_master so the CP
+        // portal can gate visibility on the agreement_status column.
+        if (input.field === 'onboardingAgreementSentStatus' && input.value === 'Sent') {
+            await client
+                .from('agreement_master')
+                .update({ agreement_status: 'Sent' })
+                .eq('cp_id', input.cpId)
+        }
+
+        return loadDataset()
+    },
+    async upsertSharedConstructionProject(input, sessionUser) {
+        const client = requireSupabase()
+
+        // Find the lead to get cp_id and name for the project record
+        const { data: lead } = await client
+            .from('lead_master')
+            .select('cp_id, lead_name')
+            .eq('id', input.leadId)
+            .single()
+
+        const { data: existing } = await client
+            .from('project_master')
+            .select('id')
+            .eq('lead_id', input.leadId)
+            .eq('partnership_model', 'Shared Construction')
+            .maybeSingle()
+
+        if (existing) {
+            const { error } = await client
+                .from('project_master')
+                .update({ status: input.executionStatus, project_value_cr: input.projectedProfitLakh })
+                .eq('id', existing.id)
+            if (error) throw error
         } else {
-          const { error } = await client.from('incentive_master').insert(payload)
-          if (error) throw error
+            const { error } = await client.from('project_master').insert({
+                cp_id: lead?.cp_id,
+                lead_id: input.leadId,
+                project_name: lead?.lead_name ?? 'Shared Construction Project',
+                project_value_cr: input.projectedProfitLakh,
+                status: input.executionStatus,
+                partnership_model: 'Shared Construction',
+            })
+            if (error) throw error
         }
-      }
-    }
 
-    await insertNotification(
-      input.stage === 'BA Collected'
-        ? 'BA collected notification to CP'
-        : 'Lead commercial stage updated',
-      `${leadRow.lead_name} moved to ${input.stage} by ${sessionUser.name}.`,
-      input.stage === 'BA Collected' ? 'cp' : 'admin',
-      'info',
-    )
+        return loadDataset()
+    },
+    async upsertBarterMatch(input, sessionUser) {
+        const client = requireSupabase()
 
-    return loadDataset()
-  },
-  async updateCommercialValues(input: CommercialValuesInput, sessionUser) {
-    const client = requireSupabase()
-    const leadRow = await findLeadRowByCode(input.leadId)
+        const { data: lead } = await client
+            .from('lead_master')
+            .select('cp_id, lead_name')
+            .eq('id', input.leadId)
+            .single()
 
-    const { error } = await client
-      .from('lead_master')
-      .update({
-        proposal_value_cr: input.proposalValueCr ?? null,
-        final_project_value_cr: input.finalProjectValueCr ?? null,
-        last_updated_at: new Date().toISOString(),
-      })
-      .eq('id', leadRow.id)
-    if (error) throw error
+        const { data: existing } = await client
+            .from('project_master')
+            .select('id')
+            .eq('lead_id', input.leadId)
+            .eq('partnership_model', 'Barter')
+            .maybeSingle()
 
-    await insertNotification(
-      'Commercial values updated',
-      `${leadRow.lead_name} proposal/final values were updated by ${sessionUser.name}.`,
-      'admin',
-      'info',
-    )
+        if (existing) {
+            const { error } = await client
+                .from('project_master')
+                .update({ status: input.matchStatus })
+                .eq('id', existing.id)
+            if (error) throw error
+        } else {
+            const { error } = await client.from('project_master').insert({
+                cp_id: lead?.cp_id,
+                lead_id: input.leadId,
+                project_name: lead?.lead_name ?? 'Barter Project',
+                project_value_cr: 0,
+                status: input.matchStatus,
+                partnership_model: 'Barter',
+            })
+            if (error) throw error
+        }
 
-    return loadDataset()
-  },
-  async updateIncentivePayment(input: IncentivePaymentInput, sessionUser) {
-    const client = requireSupabase()
-    const paymentDate =
-      input.paymentStatus === 'Released'
-        ? input.paymentDate ?? todayIso()
-        : input.paymentDate ?? null
+        return loadDataset()
+    },
+    async bulkCreateCp(rows: any[], sessionUser) {
+        const client = requireSupabase()
 
-    const { error } = await client
-      .from('incentive_master')
-      .update({
-        payment_status: input.paymentStatus,
-        payment_date: paymentDate,
-      })
-      .eq('id', input.incentiveId)
-    if (error) throw error
+        // 1. Fetch existing CP codes for upsert deduplication
+        const { data: existingRecords } = await client.from('cp_master').select('id, cp_code')
 
-    await insertNotification(
-      'Incentive payout notification to CP',
-      `Incentive ${input.incentiveId} is now ${input.paymentStatus} by ${sessionUser.name}.`,
-      'cp',
-      'info',
-    )
+        const idMap = new Map((existingRecords || []).map(c => [c.cp_code, c.id]))
+        // Use sessionUser.userMasterId directly — no extra user_master fetch needed
+        const currentUserId = sessionUser.userMasterId || null
 
-    return loadDataset()
-  },
-  async upsertSharedConstructionProject(input: SharedConstructionInput, sessionUser) {
-    const client = requireSupabase()
-    const leadRow = await findLeadRowByCode(input.leadId)
-    const { data: leadData, error: leadDataError } = await client
-      .from('lead_master')
-      .select('cp_id, lead_name, final_project_value_cr, proposal_value_cr, approximate_project_value_cr, selected_model')
-      .eq('id', leadRow.id)
-      .single()
-    if (leadDataError) throw leadDataError
-    if (leadData.selected_model !== 'Shared Construction') {
-      throw new Error('This flow only applies to Shared Construction leads.')
-    }
+        const report = {
+            inserted: 0,
+            updated: 0,
+            skipped: 0,
+            errors: [] as string[]
+        }
 
-    const projectValueCr =
-      Number(leadData.final_project_value_cr ?? leadData.proposal_value_cr ?? leadData.approximate_project_value_cr ?? 0)
-    const status = `${input.executionStatus} • ${input.allocationPercent}% allocation`
+        const cpInserts = []
+        const localCodeTracker = new Set()
 
-    const { data: existing, error: existingError } = await client
-      .from('project_master')
-      .select('id')
-      .eq('lead_id', leadRow.id)
-      .eq('partnership_model', 'Shared Construction')
-      .limit(1)
-      .maybeSingle()
-    if (existingError) throw existingError
+        for (const [index, r] of rows.entries()) {
+            const rowNum = index + 2 // 1-based + 1 for header
+            const rawId = String(r.contractor_id || '').trim()
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId)
+            const cpCode = r.cp_code || (isUuid ? generateCode('CP') : (rawId || generateCode('CP')))
+            const cpName = r.assigned_contractor_name || r.cp_name || r.name
 
-    const payload = {
-      cp_id: leadData.cp_id,
-      lead_id: leadRow.id,
-      project_name: leadData.lead_name,
-      project_value_cr: projectValueCr,
-      status,
-      partnership_model: 'Shared Construction',
-    }
+            // Validation Layer
+            if (!cpName) { report.skipped++; report.errors.push(`Row ${rowNum}: Missing cp_name`); continue }
+            if (!r.phone) { report.skipped++; report.errors.push(`Row ${rowNum}: Missing phone`); continue }
+            if (!r.cities && !r.city) { report.skipped++; report.errors.push(`Row ${rowNum}: Missing city`); continue }
+            if (localCodeTracker.has(cpCode)) { report.skipped++; report.errors.push(`Row ${rowNum}: Duplicate CP Code in file (${cpCode})`); continue }
 
-    if (existing?.id) {
-      const { error } = await client.from('project_master').update(payload).eq('id', existing.id)
-      if (error) throw error
-    } else {
-      const { error } = await client.from('project_master').insert(payload)
-      if (error) throw error
-    }
+            localCodeTracker.add(cpCode)
 
-    await insertNotification(
-      'Shared construction project activated',
-      `${leadData.lead_name} shared-construction flow updated by ${sessionUser.name}.`,
-      'admin',
-      'info',
-    )
+            const existingId = idMap.get(String(cpCode))
 
-    await insertNotification(
-      'Shared construction scope allocated',
-      `${leadData.lead_name} now has ${input.allocationPercent}% scope allocated.`,
-      'cp',
-      'info',
-    )
+            if (existingId) {
+                report.updated++
+            } else {
+                report.inserted++
+            }
 
-    return loadDataset()
-  },
-  async upsertBarterMatch(input: BarterMatchInput, sessionUser) {
-    const client = requireSupabase()
-    const leadRow = await findLeadRowByCode(input.leadId)
-    const { data: leadData, error: leadDataError } = await client
-      .from('lead_master')
-      .select('cp_id, lead_name, final_project_value_cr, proposal_value_cr, approximate_project_value_cr, selected_model')
-      .eq('id', leadRow.id)
-      .single()
-    if (leadDataError) throw leadDataError
-    if (leadData.selected_model !== 'Barter / Exchange') {
-      throw new Error('This flow only applies to Barter / Exchange leads.')
-    }
+            const rowPayload: any = {
+                id: existingId || crypto.randomUUID(),
+                cp_code: String(cpCode),
+                cp_name: cpName,
+                phone: String(r.phone || ''),
+                email: r.email || null,
+                user_type: r.user_type || 'CONTRACTOR',
+                city: r.cities || r.city || '',
+                total_assigned_projects: parseInt(String(r.total_crn || 0)) || 0,
+                active_projects: parseInt(String(r.running_crn || 0)) || 0,
+                total_portfolio_value_cr: parseFloat(String(r.total_project_value || 0)) || 0,
+                lowest_percentage_completed: parseFloat(String(r.lowest_percentage_completed || 0)) || 0,
+                tier: r.Tier || r.tier || 'Platinum',
+                bms_priority: r.BMS || r.bms_priority || r.bms_colms || 'Medium',
+                vm_owner_id: currentUserId,
+                spoc_name: sessionUser.name,
+                remarks: 'Bulk Upload ' + todayIso()
+            }
 
-    const projectValueCr =
-      Number(leadData.final_project_value_cr ?? leadData.proposal_value_cr ?? leadData.approximate_project_value_cr ?? 0)
-    const status = `${input.matchStatus} • expected ${input.expectedTimelineDays} days • ${input.notes}`
+            cpInserts.push(rowPayload)
+        }
 
-    const { data: existing, error: existingError } = await client
-      .from('project_master')
-      .select('id')
-      .eq('lead_id', leadRow.id)
-      .eq('partnership_model', 'Barter / Exchange')
-      .limit(1)
-      .maybeSingle()
-    if (existingError) throw existingError
+        if (cpInserts.length > 0) {
+            const { error } = await client
+                .from('cp_master')
+                .upsert(cpInserts, { onConflict: 'cp_code', count: 'exact' })
 
-    const payload = {
-      cp_id: leadData.cp_id,
-      lead_id: leadRow.id,
-      project_name: leadData.lead_name,
-      project_value_cr: projectValueCr,
-      status,
-      partnership_model: 'Barter / Exchange',
-    }
+            if (error) {
+                console.error('Bulk Upsert Backend Error:', error)
+                throw new Error(`Database Error: ${error.message}`)
+            }
+        }
 
-    if (existing?.id) {
-      const { error } = await client.from('project_master').update(payload).eq('id', existing.id)
-      if (error) throw error
-    } else {
-      const { error } = await client.from('project_master').insert(payload)
-      if (error) throw error
-    }
-
-    await insertNotification(
-      'Barter matching flow activated',
-      `${leadData.lead_name} barter workflow updated by ${sessionUser.name}.`,
-      'admin',
-      'info',
-    )
-
-    await insertNotification(
-      'Project matching update',
-      `${leadData.lead_name} matching status is now ${input.matchStatus}.`,
-      'cp',
-      'info',
-    )
-
-    return loadDataset()
-  },
+        return { ...await loadDataset(), importReport: report } as any
+    },
 }

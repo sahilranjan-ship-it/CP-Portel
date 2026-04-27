@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import type { Role } from '../types/domain'
 import type { SessionUser } from '../lib/supabase'
 
@@ -31,14 +32,11 @@ const roleNavItems: Record<Role, NavItem[]> = {
   ],
   cp: [
     { label: 'Profile & Hub', icon: '🏠', path: '/dashboard' },
-    { label: 'Active Leads', icon: '📊', path: '/dashboard/leads' },
-    { label: 'Won Leads', icon: '🏆', path: '/dashboard/won' },
     { label: 'Earnings', icon: '💰', path: '/dashboard/earnings' },
+    { label: 'Agreements', icon: '📝', path: '/dashboard/agreements' },
   ],
   is: [
     { label: 'Call Queue', icon: '📞', path: '/dashboard' },
-    { label: 'IS Insights', icon: '💡', path: '/dashboard/is-insights' },
-    { label: 'My Leads', icon: '🎯', path: '/dashboard/leads' },
   ],
   scheduling: [
     { label: 'Daily Queue', icon: '📅', path: '/dashboard' },
@@ -47,8 +45,8 @@ const roleNavItems: Record<Role, NavItem[]> = {
   ],
   vm: [
     { label: 'CP Master', icon: '👤', path: '/dashboard' },
-    { label: 'Onboarding', icon: '📋', path: '/dashboard/vm' },
-    { label: 'Lead Creation', icon: '➕', path: '/dashboard/leads' },
+    { label: 'Onboarding', icon: '📋', path: '/dashboard/onboarding' },
+    { label: 'Lead Creation', icon: '➕', path: '/dashboard/lead-creation' },
   ],
 }
 
@@ -62,10 +60,48 @@ export function AppShell({
   onSignOut: () => void
 }) {
   const navItems = roleNavItems[activeRole] || []
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+
+  // Close sidebar on route change (mobile navigation)
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
+
+  // Close sidebar on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && sidebarOpen) {
+        setSidebarOpen(false)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [sidebarOpen])
+
+  // Prevent body scroll when sidebar is open on mobile
+  useEffect(() => {
+    if (sidebarOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => { document.body.style.overflow = '' }
+  }, [sidebarOpen])
+
+  const closeSidebar = useCallback(() => setSidebarOpen(false), [])
+  const toggleSidebar = useCallback(() => setSidebarOpen(prev => !prev), [])
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell role-${activeRole}`}>
+      {/* Overlay for mobile sidebar */}
+      <div
+        className={`sidebar-overlay ${sidebarOpen ? 'active' : ''}`}
+        onClick={closeSidebar}
+        aria-hidden="true"
+      />
+
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon">BB</div>
           <span>{roleLabels[activeRole]}</span>
@@ -95,13 +131,34 @@ export function AppShell({
 
       <div className="main-container">
         <header className="top-bar">
+          {/* Hamburger menu button — visible only on mobile via CSS */}
+          <button
+            className="mobile-menu-btn"
+            onClick={toggleSidebar}
+            aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            type="button"
+          >
+            {sidebarOpen ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            )}
+          </button>
+
           <div className="search-bar">
             <span>🔍</span>
             <input type="text" placeholder={`Search ${activeRole} data...`} />
           </div>
 
           <div className="top-actions">
-            <div style={{ marginRight: '16px', textAlign: 'right' }}>
+            <div className="user-name-block" style={{ marginRight: '16px', textAlign: 'right' }}>
               <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{sessionUser.name}</div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{activeRole}</div>
             </div>

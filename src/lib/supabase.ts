@@ -18,7 +18,8 @@ export const supabase =
 export const isSupabaseConfigured = Boolean(supabase)
 
 export type SessionUser = {
-  id: string
+  id: string // auth.uid()
+  userMasterId: string // user_master.id
   email: string
   role: Role
   name: string
@@ -78,54 +79,132 @@ export async function resolveSessionUser(user: AuthUserLike): Promise<SessionUse
   }
 
   // 1. Check by linked auth_user_id
-  const { data } = await supabase
+  const { data, error: fetchError } = await supabase
     .from('user_master')
     .select('id, full_name, email, role')
     .eq('auth_user_id', user.id)
     .limit(1)
     .maybeSingle()
 
-  if (data?.email && data?.role && data?.full_name) {
-    return {
-      id: user.id,
-      email: data.email,
-      role: data.role as Role,
-      name: data.full_name,
-    }
+  if (fetchError) {
+    console.error('Error fetching user_master by auth_user_id:', fetchError)
   }
+
+  let matchedUser = data
 
   // 2. Check by email (Auto-link for first time)
-  const { data: emailMatch } = await supabase
-    .from('user_master')
-    .select('id, full_name, email, role, auth_user_id')
-    .ilike('email', email)
-    .limit(1)
-    .maybeSingle()
+  if (!matchedUser) {
+    const { data: emailMatch, error: emailError } = await supabase
+      .from('user_master')
+      .select('id, full_name, email, role, auth_user_id')
+      .ilike('email', email)
+      .limit(1)
+      .maybeSingle()
 
-  if (emailMatch?.email && emailMatch?.role && emailMatch?.full_name) {
-    if (emailMatch.auth_user_id) {
-      throw new Error(`This email (${email}) is already linked to another account.`)
+    if (emailError) {
+      console.error('Error fetching user_master by email:', emailError)
     }
 
-    // Auto-link
-    const { error: linkError } = await supabase
-      .from('user_master')
-      .update({ auth_user_id: user.id })
-      .eq('id', emailMatch.id)
+    if (emailMatch?.email && emailMatch?.role && emailMatch?.full_name) {
+      if (emailMatch.auth_user_id) {
+        throw new Error(`This email (${email}) is already linked to another account.`)
+      }
 
-    if (linkError) throw linkError
+      // Auto-link
+      console.log('Auto-linking auth user to user_master:', { authId: user.id, masterId: emailMatch.id })
+      const { error: linkError } = await supabase
+        .from('user_master')
+        .update({ auth_user_id: user.id })
+        .eq('id', emailMatch.id)
 
-    return {
-      id: user.id,
-      email: emailMatch.email,
-      role: emailMatch.role as Role,
-      name: emailMatch.full_name,
+      if (linkError) throw linkError
+      matchedUser = emailMatch
     }
   }
 
-  throw new Error(
-    'Your account is not provisioned for this CRM. Ask an admin to create a user_master record with your role before signing in.',
-  )
+  // 3. AUTO-PROVISION GUARD: If the trigger failed or hasn't run yet, we provision manually
+  if (!matchedUser) {
+    console.warn('User record NOT found, auto-provisioning now...', user.id)
+
+    // 3a. Create user_master first
+    const { data: newUser, error: createError } = await supabase
+      .from('user_master')
+      .insert({
+        auth_user_id: user.id,
+        email: email,
+        full_name: user.user_metadata?.full_name || user.user_metadata?.name || email.split('@')[0],
+        role: 'cp',
+        city: 'Not Set',
+        active: true
+      })
+      .select()
+      .single()
+
+    if (createError) {
+      console.error('Manual provisioning failed:', createError)
+      throw new Error(`Auth Sync Error: ${createError.message}. Please contact support.`)
+    }
+
+    matchedUser = newUser
+
+    // 3b. LINK or Create CP record
+    // First check if a CP record with this email already exists but isn't linked
+    const { data: existingCp } = await supabase
+      .from('cp_master')
+      .select('id')
+      .ilike('email', email)
+      .limit(1)
+      .maybeSingle()
+
+    if (existingCp) {
+      console.log('Linking new user to existing CP record:', existingCp.id)
+      await supabase.from('cp_master').update({ linked_user_id: matchedUser.id }).eq('id', existingCp.id)
+    } else {
+      console.log('Creating brand new CP record for first-time user')
+      const { error: cpError } = await supabase.from('cp_master').insert({
+        cp_code: `CP-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+        cp_name: matchedUser.full_name,
+        email: email,
+        linked_user_id: matchedUser.id,
+        city: 'Location Pending',
+        phone: 'Contact Unverified',
+        tier: 'Platinum',
+        eligible_for_project: true
+      })
+      if (cpError) console.error('CP record creation failed during auto-link:', cpError)
+    }
+  }
+
+  if (matchedUser?.email && matchedUser?.role && matchedUser?.full_name) {
+    const targetRole = matchedUser.role.toLowerCase() as Role
+
+    // Use the RAW (un-normalised) JWT value for comparison.
+    // If it is 'VM', 'Vm', 'Is', etc. we need an exact mismatch so that
+    // supabase.auth.updateUser() is called and the token is rewritten with
+    // the correct lowercase value.  Lowercasing both sides before comparing
+    // would mask the drift and leave an uppercase value in the JWT forever,
+    // causing `current_app_role()` in PostgreSQL to throw a hard enum-cast
+    // error and return 0 rows from every RLS-protected table.
+    const rawMetadataRole = user.user_metadata?.role as string | undefined
+
+    // 🔄 ROLE SYNC: Ensure JWT metadata exactly matches user_master role for RLS
+    if (rawMetadataRole !== targetRole) {
+      console.log(`[resolveSessionUser] Syncing JWT role: "${rawMetadataRole}" → "${targetRole}"`)
+      await supabase.auth.updateUser({
+        data: { role: targetRole }
+      })
+    }
+
+    return {
+      id: user.id,
+      userMasterId: matchedUser.id,
+      email: matchedUser.email,
+      role: targetRole,
+      name: matchedUser.full_name,
+    }
+  }
+
+  throw new Error('Critical Auth Error: Unable to resolve or create user profile.')
 }
 
 export async function signOut() {

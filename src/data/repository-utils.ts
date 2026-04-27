@@ -12,6 +12,7 @@ import type {
   Notification,
   ScheduleMeetingInput,
   VmLeadInput,
+  CPOnboardingUpdateInput,
 } from '../types/domain'
 
 export function generateCode(prefix: string) {
@@ -154,8 +155,8 @@ export function applyIsDisposition(
   const stage: LeadStage = qualified
     ? 'Qualified'
     : input.interestStatus === 'Non-Interested'
-      ? 'Non-Interested'
-      : 'Calling Attempt'
+      ? 'Rejected'
+      : 'Callback Later'
 
   const crnNumber = qualified ? lead.crnNumber ?? generateCode('CRN') : lead.crnNumber
   const nextAction = qualified
@@ -167,41 +168,41 @@ export function applyIsDisposition(
   const updatedLeads = dataset.leads.map((item) =>
     item.id === input.leadId
       ? {
-          ...item,
-          isOwner: sessionUser.name,
-          currentStage: stage,
-          temperature: input.temperature,
-          crnNumber,
-          lastUpdatedAt: nowIso(),
-          nextAction,
-          bucket: input.interestStatus === 'Non-Interested' ? 'Rejected Leads' : item.bucket,
-        }
+        ...item,
+        isOwner: sessionUser.name,
+        currentStage: stage,
+        temperature: input.temperature,
+        crnNumber,
+        lastUpdatedAt: nowIso(),
+        nextAction,
+        bucket: input.interestStatus === 'Non-Interested' ? 'Rejected Leads' : item.bucket,
+      }
       : item,
   )
 
   const existing = dataset.isUpdates.find((item) => item.leadId === input.leadId)
   const updatedIsUpdates = existing
     ? dataset.isUpdates.map((item) =>
-        item.leadId === input.leadId
-          ? {
-              ...item,
-              status: input.callStatus,
-              interestStatus: input.interestStatus,
-              comment: input.comment,
-              nextFollowUpDate: input.nextFollowUpDate,
-            }
-          : item,
-      )
-    : [
-        {
-          leadId: input.leadId,
+      item.leadId === input.leadId
+        ? {
+          ...item,
           status: input.callStatus,
           interestStatus: input.interestStatus,
           comment: input.comment,
           nextFollowUpDate: input.nextFollowUpDate,
-        },
-        ...dataset.isUpdates,
-      ]
+        }
+        : item,
+    )
+    : [
+      {
+        leadId: input.leadId,
+        status: input.callStatus,
+        interestStatus: input.interestStatus,
+        comment: input.comment,
+        nextFollowUpDate: input.nextFollowUpDate,
+      },
+      ...dataset.isUpdates,
+    ]
 
   const notifications = [...dataset.notifications]
   if (qualified) {
@@ -235,14 +236,14 @@ export function applyMeetingSchedule(
   const updatedLeads = dataset.leads.map((item) =>
     item.id === input.leadId
       ? {
-          ...item,
-          schedulingOwner: sessionUser.name,
-          assignedOs: input.assignedOs,
-          meetingAt: `${input.date}T${input.time}:00+05:30`,
-          currentStage: meetingStage,
-          lastUpdatedAt: nowIso(),
-          nextAction: 'Conduct meeting and update outcome',
-        }
+        ...item,
+        schedulingOwner: sessionUser.name,
+        assignedOs: input.assignedOs,
+        meetingAt: `${input.date}T${input.time}:00+05:30`,
+        currentStage: meetingStage,
+        lastUpdatedAt: nowIso(),
+        nextAction: 'Conduct meeting and update outcome',
+      }
       : item,
   )
 
@@ -285,26 +286,33 @@ export function applyCreateCp(
 ) {
   const newCp: ContractorPartner = {
     id: generateCode('CP'),
+    code: input.contractorId || generateCode('CP'),
     name: input.cpName,
-    companyName: input.companyName,
+    companyName: input.companyName || '',
     city: input.city,
     activeSince: todayIso(),
-    primaryScope: input.primaryScope,
+    primaryScope: input.primaryScope || '',
     phone: input.phone,
     spoc: sessionUser.name,
     vmOwner: sessionUser.name,
-    tier: input.tier,
-    activeProjects: 0,
+    tier: input.tier || 'Platinum',
+    activeProjects: input.runningCrn || 0,
     completedProjects: 0,
     heldProjects: 0,
-    totalProjectValueCr: input.portfolioValueCr,
-    totalAssignedProjects: 0,
+    totalProjectValueCr: input.totalProjectValue || 0,
+    totalAssignedProjects: input.totalCrn || 0,
     averageCsat: 0,
     averageDelayDays: 0,
-    bmsPriority: 'Medium',
+    bmsPriority: (input.bmsPriority as any) || 'Medium',
     eligibleForProject: true,
     initProjectCount: 0,
     leadsReceived: 0,
+    email: input.email,
+    userType: input.userType || 'CONTRACTOR',
+    lowestPercentageCompleted: input.lowestPercentageCompleted || 0,
+    onboardingVmName: sessionUser.name,
+    onboardingAgreementSentStatus: 'Pending',
+    onboardingCpSignedStatus: 'Pending',
   }
 
   const newAgreement: Agreement = {
@@ -338,24 +346,55 @@ export function applyAgreementUpdate(
   input: AgreementUpdateInput,
   sessionUser: SessionUser,
 ) {
+  const updatedAgreements = dataset.agreements.map((item) => {
+    const isMatch = input.id ? item.id === input.id : item.contractorId === input.contractorId;
+    return isMatch
+      ? {
+        ...item,
+        status: input.status ?? item.status,
+        signedDate: input.status === 'Done' ? todayIso() : item.signedDate,
+        spotdraftStatus: input.status === 'Done' ? 'Completed' : (input.status === 'Sent' ? 'Sent' : item.spotdraftStatus),
+        vmOwner: input.vmOwner ?? item.vmOwner,
+        callStatus: input.callStatus ?? item.callStatus,
+        meetingStatus: input.meetingStatus ?? item.meetingStatus,
+        meetingScheduledDate: input.meetingScheduledDate ?? item.meetingScheduledDate,
+        alignedForActivation: input.alignedForActivation ?? item.alignedForActivation,
+        modeOfMeeting: input.modeOfMeeting ?? item.modeOfMeeting,
+        readyForSigning: input.readyForSigning ?? item.readyForSigning,
+      }
+      : item
+  });
+
   return {
     ...dataset,
-    agreements: dataset.agreements.map((item) =>
-      item.contractorId === input.contractorId
-        ? {
-            ...item,
-            status: input.status,
-            signedDate: input.status === 'Done' ? todayIso() : item.signedDate,
-            spotdraftStatus: input.status === 'Done' ? 'Completed' : item.spotdraftStatus,
-          }
-        : item,
-    ),
+    agreements: updatedAgreements,
     notifications: [
       createNotification(
         'Agreement status updated',
-        `${input.contractorId} agreement is now ${input.status} by ${sessionUser.name}.`,
+        `${input.contractorId} onboarding data updated by ${sessionUser.name}.`,
         'admin',
         input.status === 'Done' ? 'info' : 'warn',
+      ),
+      ...dataset.notifications,
+    ],
+  }
+}
+export function applyCpOnboardingUpdate(
+  dataset: AppDataset,
+  input: CPOnboardingUpdateInput,
+  sessionUser: SessionUser,
+) {
+  return {
+    ...dataset,
+    cps: dataset.cps.map((cp) =>
+      cp.id === input.cpId ? { ...cp, [input.field]: input.value } : cp
+    ),
+    notifications: [
+      createNotification(
+        'Onboarding data updated',
+        `${input.cpId} field ${input.field} updated by ${sessionUser.name}.`,
+        'admin',
+        'info',
       ),
       ...dataset.notifications,
     ],

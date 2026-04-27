@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppShell } from './components/app-shell'
 import { AuthPage } from './features/auth/auth-page'
 import { CpDashboard } from './features/dashboard/cp-dashboard'
@@ -7,9 +7,26 @@ import { IsDashboard } from './features/dashboard/is-dashboard'
 import { SchedulingDashboard } from './features/dashboard/scheduling-dashboard'
 import { VmDashboard } from './features/dashboard/vm-dashboard'
 import { AdminDashboard } from './features/dashboard/admin-dashboard'
-import { isSupabaseConfigured, resolveSessionUser, signInWithGoogle, signOut, supabase, type SessionUser } from './lib/supabase'
+import { resolveSessionUser, signInWithGoogle, signOut, supabase, type SessionUser } from './lib/supabase'
 import type { Role } from './types/domain'
 import { AppDataProvider } from './data/app-data-provider'
+import { useAppData } from './data/app-data'
+
+// ── ReloadOnAuth ─────────────────────────────────────────────────────────────────────────────
+// Sits inside AppDataProvider so it can call reload().
+// Fires a fresh loadDataset() whenever the authenticated user's ID changes
+// (i.e. right after resolveSessionUser completes and has synced the role into the JWT).
+// This ensures cp_master / lead_master queries run with the CORRECT role in the JWT,
+// not the stale/missing role that may have been in the token when AppDataProvider first mounted.
+function ReloadOnAuth({ authUserId }: { authUserId: string | null }) {
+  const { reload } = useAppData()
+  useEffect(() => {
+    if (authUserId) {
+      void reload()
+    }
+  }, [authUserId, reload])
+  return null
+}
 
 function DashboardRouter({
   activeRole,
@@ -18,17 +35,20 @@ function DashboardRouter({
   activeRole: Role
   sessionUser: SessionUser
 }) {
+  const location = useLocation()
+  const subPath = location.pathname.split('/').pop() || ''
+
   switch (activeRole) {
     case 'cp':
-      return <CpDashboard sessionUser={sessionUser} />
+      return <CpDashboard sessionUser={sessionUser} subPath={subPath} />
     case 'is':
-      return <IsDashboard sessionUser={sessionUser} />
+      return <IsDashboard sessionUser={sessionUser} subPath={subPath} />
     case 'scheduling':
-      return <SchedulingDashboard sessionUser={sessionUser} />
+      return <SchedulingDashboard sessionUser={sessionUser} subPath={subPath} />
     case 'vm':
-      return <VmDashboard sessionUser={sessionUser} />
+      return <VmDashboard sessionUser={sessionUser} subPath={subPath} />
     case 'admin':
-      return <AdminDashboard sessionUser={sessionUser} />
+      return <AdminDashboard sessionUser={sessionUser} subPath={subPath} />
     default:
       return <div>Access Denied: Unknown Role</div>
   }
@@ -67,19 +87,19 @@ export function App() {
       } catch (caughtError) {
         setIsAuthenticated(false)
         setError(caughtError instanceof Error ? caughtError.message : 'Auth Error')
-        await supabase.auth.signOut()
+        await supabase?.auth.signOut()
       } finally {
         setBooting(false)
       }
     }
 
     // Initial session check
-    supabase.auth.getSession().then(({ data }) => {
+    supabase?.auth.getSession().then(({ data }) => {
       syncSession(data.session?.user)
     })
 
-    // Auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Auth state listener — supabase is non-null here (guarded above)
+    const { data: { subscription } } = supabase!.auth.onAuthStateChange((_event, session) => {
       if (_event === 'SIGNED_OUT') {
         setIsAuthenticated(false)
         setSessionUser(null)
@@ -125,6 +145,8 @@ export function App() {
   return (
     <AppDataProvider>
       <BrowserRouter>
+        {/* Re-fetch all data once auth resolves so RLS policies see the correct role */}
+        <ReloadOnAuth authUserId={sessionUser?.id ?? null} />
         <Routes>
           <Route
             path="/"

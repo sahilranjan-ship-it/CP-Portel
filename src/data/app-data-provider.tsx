@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useMemo, useState, type PropsWithChildren } from 'react'
 import { AppDataContext, type AppDataContextValue } from './app-data'
-import { appDataset } from './mockData'
 import type { AppDataset } from '../types/domain'
 import { getAppRepository } from './repository-factory'
 
 export function AppDataProvider({ children }: PropsWithChildren) {
-  const [dataset, setDataset] = useState<AppDataset>(appDataset)
+  const [dataset, setDataset] = useState<AppDataset>({
+    users: [],
+    cps: [],
+    leads: [],
+    isUpdates: [],
+    meetings: [],
+    incentives: [],
+    sharedConstructionProjects: [],
+    barterProjectMatches: [],
+    agreements: [],
+    vmUpdates: [],
+    notifications: [],
+  })
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const repository = useMemo(() => getAppRepository(), [])
@@ -77,6 +88,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           setIsLoading(false)
         }
       },
+      async updateCp(id, input, sessionUser) {
+        setIsLoading(true)
+        try {
+          const nextDataset = await repository.updateCp(id, input, sessionUser)
+          setDataset(nextDataset)
+        } catch (caughtError) {
+          setError(caughtError instanceof Error ? caughtError.message : 'Failed to update contractor partner.')
+        } finally {
+          setIsLoading(false)
+        }
+      },
       async createCp(input, sessionUser) {
         setIsLoading(true)
         try {
@@ -132,6 +154,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           setIsLoading(false)
         }
       },
+      async updateCpOnboarding(input, sessionUser) {
+        setIsLoading(true)
+        try {
+          const nextDataset = await repository.updateCpOnboarding(input, sessionUser)
+          setDataset(nextDataset)
+        } catch (caughtError) {
+          setError(caughtError instanceof Error ? caughtError.message : 'Failed to update CP onboarding.')
+        } finally {
+          setIsLoading(false)
+        }
+      },
       async upsertSharedConstructionProject(input, sessionUser) {
         setIsLoading(true)
         try {
@@ -150,6 +183,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           setDataset(nextDataset)
         } catch (caughtError) {
           setError(caughtError instanceof Error ? caughtError.message : 'Failed to update barter flow.')
+        } finally {
+          setIsLoading(false)
+        }
+      },
+      async bulkCreateCp(rows, sessionUser) {
+        setIsLoading(true)
+        try {
+          const res = await repository.bulkCreateCp(rows, sessionUser)
+          setDataset(res)
+          return res
+        } catch (caughtError) {
+          setError(caughtError instanceof Error ? caughtError.message : 'Failed to bulk-create contractor partners.')
+          throw caughtError
         } finally {
           setIsLoading(false)
         }

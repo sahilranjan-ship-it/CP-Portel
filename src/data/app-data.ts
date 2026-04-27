@@ -25,12 +25,15 @@ export type AppDataContextValue = {
   updateIsDisposition: (input: IsDispositionInput, sessionUser: SessionUser) => Promise<void>
   scheduleMeeting: (input: ScheduleMeetingInput, sessionUser: SessionUser) => Promise<void>
   createCp: (input: NewCpInput, sessionUser: SessionUser) => Promise<void>
+  updateCp: (id: string, input: NewCpInput, sessionUser: SessionUser) => Promise<void>
   updateAgreement: (input: AgreementUpdateInput, sessionUser: SessionUser) => Promise<void>
   updateCommercialStage: (input: CommercialStageInput, sessionUser: SessionUser) => Promise<void>
   updateCommercialValues: (input: CommercialValuesInput, sessionUser: SessionUser) => Promise<void>
   updateIncentivePayment: (input: IncentivePaymentInput, sessionUser: SessionUser) => Promise<void>
+  updateCpOnboarding: (input: any, sessionUser: SessionUser) => Promise<void>
   upsertSharedConstructionProject: (input: SharedConstructionInput, sessionUser: SessionUser) => Promise<void>
   upsertBarterMatch: (input: BarterMatchInput, sessionUser: SessionUser) => Promise<void>
+  bulkCreateCp: (rows: any[], sessionUser: SessionUser) => Promise<any>
 }
 
 export const AppDataContext = createContext<AppDataContextValue | null>(null)
