@@ -8,7 +8,7 @@ import type {
 } from '../types/domain'
 import type { AppRepository } from './repository'
 import { generateCode, todayIso } from './repository-utils'
-import type { SessionUser } from '../lib/supabase'
+import type { SessionUser as _SessionUser } from '../lib/supabase'
 
 function requireSupabase() {
     if (!supabase) {
@@ -337,7 +337,7 @@ export const supabaseRepository: AppRepository = {
 
         return loadDataset()
     },
-    async createVmLead(input, sessionUser) {
+    async createVmLead(input, _sessionUser) {
         const client = requireSupabase()
         const leadCode = generateCode('LD')
         const { error } = await client.from('lead_master').insert({
@@ -452,7 +452,7 @@ export const supabaseRepository: AppRepository = {
 
         return loadDataset()
     },
-    async updateCp(id, input, sessionUser) {
+    async updateCp(id, input, _sessionUser) {
         const client = requireSupabase()
         const { error } = await client
             .from('cp_master')
@@ -477,7 +477,7 @@ export const supabaseRepository: AppRepository = {
         if (error) throw error
         return loadDataset()
     },
-    async updateAgreement(input, sessionUser) {
+    async updateAgreement(input, _sessionUser) {
         const client = requireSupabase()
 
         // 1. Update agreement_master for status / signed date
@@ -513,7 +513,7 @@ export const supabaseRepository: AppRepository = {
 
         return loadDataset()
     },
-    async updateCommercialStage(input, sessionUser) {
+    async updateCommercialStage(input, _sessionUser) {
         const client = requireSupabase()
         const { error } = await client
             .from('lead_master')
@@ -522,7 +522,7 @@ export const supabaseRepository: AppRepository = {
         if (error) throw error
         return loadDataset()
     },
-    async updateCommercialValues(input, sessionUser) {
+    async updateCommercialValues(input, _sessionUser) {
         const client = requireSupabase()
         const { error } = await client
             .from('lead_master')
@@ -535,7 +535,7 @@ export const supabaseRepository: AppRepository = {
         if (error) throw error
         return loadDataset()
     },
-    async updateIncentivePayment(input, sessionUser) {
+    async updateIncentivePayment(input, _sessionUser) {
         const client = requireSupabase()
         const { error } = await client
             .from('incentive_master')
@@ -547,7 +547,7 @@ export const supabaseRepository: AppRepository = {
         if (error) throw error
         return loadDataset()
     },
-    async updateCpOnboarding(input, sessionUser) {
+    async updateCpOnboarding(input, _sessionUser) {
         const client = requireSupabase()
         const dbField = input.field.replace(/[A-Z]/g, (m: string) => `_${m.toLowerCase()}`)
         const { error } = await client
@@ -567,7 +567,7 @@ export const supabaseRepository: AppRepository = {
 
         return loadDataset()
     },
-    async upsertSharedConstructionProject(input, sessionUser) {
+    async upsertSharedConstructionProject(input, _sessionUser) {
         const client = requireSupabase()
 
         // Find the lead to get cp_id and name for the project record
@@ -604,7 +604,7 @@ export const supabaseRepository: AppRepository = {
 
         return loadDataset()
     },
-    async upsertBarterMatch(input, sessionUser) {
+    async upsertBarterMatch(input, _sessionUser) {
         const client = requireSupabase()
 
         const { data: lead } = await client

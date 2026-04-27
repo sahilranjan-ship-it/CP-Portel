@@ -177,10 +177,7 @@ export function CpDashboard({ sessionUser, subPath }: { sessionUser: SessionUser
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formSuccess, setFormSuccess] = useState(false)
 
-  const isEarningsView = subPath === 'earnings'
   const isAgreementsView = subPath === 'agreements'
-  const [showAgreementModal, setShowAgreementModal] = useState(false)
-  const [selectedAgreementId, setSelectedAgreementId] = useState<string | null>(null)
 
   // ── Submission ──
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {

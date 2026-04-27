@@ -59,6 +59,7 @@ export const users: UserProfile[] = [
 export const cps: ContractorPartner[] = [
   {
     id: 'CP-1001',
+    code: 'CP-1001',
     name: 'Rohit Naik',
     companyName: 'Naik Structures',
     city: 'Bengaluru',
@@ -82,6 +83,7 @@ export const cps: ContractorPartner[] = [
   },
   {
     id: 'CP-1027',
+    code: 'CP-1027',
     name: 'Ramesh Gowda',
     companyName: 'RG Buildworks',
     city: 'Mysuru',
@@ -231,7 +233,7 @@ export const leads: Lead[] = [
     projectType: 'Independent House',
     selectedModel: 'Direct Incentive',
     projectValueCr: 1.6,
-    currentStage: 'Non-Interested',
+    currentStage: 'Rejected',
     temperature: 'Cold',
     bucket: 'Rejected Leads',
     cpId: 'CP-1027',

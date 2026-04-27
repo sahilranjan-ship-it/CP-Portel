@@ -70,6 +70,10 @@ export const demoRepository: AppRepository = {
   async updateCpOnboarding(input, sessionUser) {
     return persist(applyCpOnboardingUpdate(loadStoredDataset(), input, sessionUser))
   },
+  async updateCp(_input, _sessionUser) {
+    // Demo mode: no-op, return current dataset
+    return loadStoredDataset()
+  },
   async upsertSharedConstructionProject(input, sessionUser) {
     return persist(applySharedConstructionProject(loadStoredDataset(), input, sessionUser))
   },
@@ -87,7 +91,7 @@ export const demoRepository: AppRepository = {
     for (const row of rows) {
       try {
         // Simple heuristic: if row has a contractorId that exists, it's an update
-        const exists = currentDataset.cps.find(c => c.code === (row.contractor_id || row.contractorId));
+        const exists = currentDataset.cps.find((c: any) => c.code === (row.contractor_id || row.contractorId));
         const input: NewCpInput = {
           contractorId: row.contractor_id || row.contractorId || `CP-${Math.floor(Math.random() * 10000)}`,
           cpName: row.assigned_contractor_name || row.cpName || row.cp_name || 'Unknown',

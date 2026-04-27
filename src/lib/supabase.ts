@@ -158,53 +158,45 @@ export async function resolveSessionUser(user: AuthUserLike): Promise<SessionUse
 
     if (existingCp) {
       console.log('Linking new user to existing CP record:', existingCp.id)
-      await supabase.from('cp_master').update({ linked_user_id: matchedUser.id }).eq('id', existingCp.id)
+      await supabase.from('cp_master').update({ linked_user_id: matchedUser!.id }).eq('id', existingCp.id)
     } else {
       console.log('Creating brand new CP record for first-time user')
-      const { error: cpError } = await supabase.from('cp_master').insert({
+      await supabase.from('cp_master').insert({
         cp_code: `CP-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-        cp_name: matchedUser.full_name,
+        cp_name: matchedUser!.full_name,
         email: email,
-        linked_user_id: matchedUser.id,
+        linked_user_id: matchedUser!.id,
         city: 'Location Pending',
         phone: 'Contact Unverified',
         tier: 'Platinum',
         eligible_for_project: true
       })
-      if (cpError) console.error('CP record creation failed during auto-link:', cpError)
     }
   }
 
-  if (matchedUser?.email && matchedUser?.role && matchedUser?.full_name) {
-    const targetRole = matchedUser.role.toLowerCase() as Role
-
-    // Use the RAW (un-normalised) JWT value for comparison.
-    // If it is 'VM', 'Vm', 'Is', etc. we need an exact mismatch so that
-    // supabase.auth.updateUser() is called and the token is rewritten with
-    // the correct lowercase value.  Lowercasing both sides before comparing
-    // would mask the drift and leave an uppercase value in the JWT forever,
-    // causing `current_app_role()` in PostgreSQL to throw a hard enum-cast
-    // error and return 0 rows from every RLS-protected table.
-    const rawMetadataRole = user.user_metadata?.role as string | undefined
-
-    // 🔄 ROLE SYNC: Ensure JWT metadata exactly matches user_master role for RLS
-    if (rawMetadataRole !== targetRole) {
-      console.log(`[resolveSessionUser] Syncing JWT role: "${rawMetadataRole}" → "${targetRole}"`)
-      await supabase.auth.updateUser({
-        data: { role: targetRole }
-      })
-    }
-
-    return {
-      id: user.id,
-      userMasterId: matchedUser.id,
-      email: matchedUser.email,
-      role: targetRole,
-      name: matchedUser.full_name,
-    }
+  const finalUser = matchedUser
+  if (!finalUser) {
+    throw new Error('Critical Auth Error: Unable to resolve or create user profile.')
   }
 
-  throw new Error('Critical Auth Error: Unable to resolve or create user profile.')
+  const targetRole = finalUser.role.toLowerCase() as Role
+
+  // 🔄 ROLE SYNC: Ensure JWT metadata exactly matches user_master role for RLS
+  const rawMetadataRole = user.user_metadata?.role as string | undefined
+  if (rawMetadataRole !== targetRole) {
+    console.log(`[resolveSessionUser] Syncing JWT role: "${rawMetadataRole}" → "${targetRole}"`)
+    await supabase.auth.updateUser({
+      data: { role: targetRole }
+    })
+  }
+
+  return {
+    id: user.id,
+    userMasterId: finalUser.id,
+    email: finalUser.email,
+    role: targetRole,
+    name: finalUser.full_name,
+  }
 }
 
 export async function signOut() {
