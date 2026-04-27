@@ -184,10 +184,15 @@ export async function resolveSessionUser(user: AuthUserLike): Promise<SessionUse
   // 🔄 ROLE SYNC: Ensure JWT metadata exactly matches user_master role for RLS
   const rawMetadataRole = user.user_metadata?.role as string | undefined
   if (rawMetadataRole !== targetRole) {
-    console.log(`[resolveSessionUser] Syncing JWT role: "${rawMetadataRole}" → "${targetRole}"`)
-    await supabase.auth.updateUser({
-      data: { role: targetRole }
-    })
+    console.log(`[resolveSessionUser] Syncing JWT role: "${rawMetadataRole || 'none'}" → "${targetRole}"`)
+    try {
+      await supabase.auth.updateUser({
+        data: { role: targetRole }
+      })
+      console.log('[resolveSessionUser] JWT role sync initiated successfully')
+    } catch (err) {
+      console.error('[resolveSessionUser] JWT role sync failed:', err)
+    }
   }
 
   return {

@@ -62,6 +62,8 @@ export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null)
   const [activeRole, setActiveRole] = useState<Role | null>(null)
 
+  const [syncInProgress, setSyncInProgress] = useState(false)
+
   useEffect(() => {
     if (!supabase) {
       setBooting(false)
@@ -70,11 +72,15 @@ export function App() {
     }
 
     const syncSession = async (user: any) => {
+      if (syncInProgress) return
+      setSyncInProgress(true)
+
       if (!user?.email) {
         setIsAuthenticated(false)
         setSessionUser(null)
         setActiveRole(null)
         setBooting(false)
+        setSyncInProgress(false)
         return
       }
 
@@ -84,34 +90,41 @@ export function App() {
         setActiveRole(resolvedUser.role)
         setIsAuthenticated(true)
         setError(null)
+
+        // Clean up URL hash after successful login fragment parsing
+        if (window.location.hash) {
+          window.history.replaceState(null, '', window.location.pathname + window.location.search)
+        }
       } catch (caughtError) {
         setIsAuthenticated(false)
         setError(caughtError instanceof Error ? caughtError.message : 'Auth Error')
         await supabase?.auth.signOut()
       } finally {
         setBooting(false)
+        setSyncInProgress(false)
       }
     }
 
-    // Initial session check
-    supabase?.auth.getSession().then(({ data }) => {
-      syncSession(data.session?.user)
-    })
+    // Single source of truth for auth state
+    // onAuthStateChange fires INITIAL_SESSION immediately on start
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log(`[Auth Event] ${event}`, session?.user?.email)
 
-    // Auth state listener — supabase is non-null here (guarded above)
-    const { data: { subscription } } = supabase!.auth.onAuthStateChange((_event, session) => {
-      if (_event === 'SIGNED_OUT') {
+      if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false)
         setSessionUser(null)
         setActiveRole(null)
         setBooting(false)
       } else if (session?.user) {
         syncSession(session.user)
+      } else {
+        // Handle cases where session is null (e.g. initial load with no session)
+        setBooting(false)
       }
     })
 
     return () => subscription.unsubscribe()
-  }, [])
+  }, [syncInProgress])
 
   async function handleGoogleSignIn() {
     try {
